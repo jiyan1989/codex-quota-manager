@@ -1,0 +1,15 @@
+/dist/
+/work/
+/validation/
+*.exe
+*.pdb
+*.log
+*.jsonl
+settings.json
+state.json
+control.json
+*.tmp
+__pycache__/
+*.py[cod]
+.env
+.env.*
