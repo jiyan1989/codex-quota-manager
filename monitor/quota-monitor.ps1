@@ -143,10 +143,14 @@ function Get-RecoveryWaitReason($State,$Snapshot,$Quota) {
     if(!$script:AutoResumeEnabled -and !$State.manualStart){return '自动继续已关闭；额度恢复后需手动继续'}
     if(!(Test-AutoResumeAllowed $State)){return '未勾选自动继续'}
     if(!$Quota.allowed){return (Get-QuotaStatus $Quota)}
+    if($State.manualStart -and !(Test-ManagedQuotaReady $Quota $State)){
+        $values=$(switch($script:QuotaBasis){'fiveHour'{"五小时剩余 $($Quota.remaining)%"}'weekly'{"周剩余 $($Quota.weeklyRemaining)%"}default{"五小时剩余 $($Quota.remaining)%、周剩余 $($Quota.weeklyRemaining)%"}})
+        return ($values+'；手动继续需高于暂停阈值 '+$PauseRemainingPercent+'%')
+    }
     if($script:QuotaBasis -eq 'weekly' -and $null -eq $Quota.weeklyRemaining){return '周额度未知，等待服务确认'}
     if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le 0){return '周额度已耗尽'}
     if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return ('周额度剩余 '+$Quota.weeklyRemaining+'%，低于恢复阈值 '+$script:ResumeRemainingPercent+'%（暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%）')}
-    if(!(Test-ManagedQuotaReady $Quota)){
+    if(!(Test-ManagedQuotaReady $Quota $State)){
         $values=$(switch($script:QuotaBasis){'fiveHour'{"五小时剩余 $($Quota.remaining)%"}'weekly'{"周剩余 $($Quota.weeklyRemaining)%"}default{"五小时剩余 $($Quota.remaining)%、周剩余 $($Quota.weeklyRemaining)%"}})
         return ($values+'；所选额度需恢复至 '+$script:ResumeRemainingPercent+'%')
     }
@@ -601,7 +605,8 @@ function Get-EffectiveQuota($Live) {
 function Test-SameGoal($Goal,$Saved) {
     return $null -ne $Goal -and $null -ne $Saved -and $Goal.createdAt -eq $Saved.createdAt -and $Goal.objective -eq $Saved.objective -and $Goal.tokenBudget -eq $Saved.tokenBudget
 }
-function Test-ManagedQuotaReady($Quota) {
+function Test-ManagedQuotaReady($Quota,$State=$null) {
+    if($State.manualStart){return $Quota.allowed -and !(Test-QuotaPause $Quota)}
     $primary=$(if($script:ResumeRemainingPercent -ge 0){$Quota.remaining -ge $script:ResumeRemainingPercent}else{$Quota.remaining -gt $PauseRemainingPercent})
     $weekly=$(if($null -eq $Quota.weeklyRemaining){$true}elseif($script:ResumeRemainingPercent -ge 0){$Quota.weeklyRemaining -ge $script:ResumeRemainingPercent}else{$Quota.weeklyRemaining -gt $script:WeeklyPauseRemainingPercent})
     if($script:QuotaBasis -eq 'weekly'){return $Quota.allowed -and $null -ne $Quota.weeklyRemaining -and $weekly}
@@ -626,7 +631,7 @@ function Get-GoalDecision($State,$Snapshot,$Quota,[long]$Now) {
         $expectedStatus=$(if($State.pausedSource -eq 'quota'){'usageLimited'}else{'paused'})
         if($goal.status -ne $expectedStatus -or $goal.updatedAt -ne $State.pausedGoalUpdatedAt -or $Snapshot.latestTurnStartMessageId -ne $State.baselineMessageId){return 'UserChanged'}
         if($active -or $Snapshot.threadRuntimeStatus.type -eq 'active' -or @($Snapshot.requests).Count){return 'Wait'}
-        if((Test-AutoResumeAllowed $State) -and $Quota.allowed -and (Test-ManagedQuotaReady $Quota)){return 'RecoveryReady'}
+        if((Test-AutoResumeAllowed $State) -and $Quota.allowed -and (Test-ManagedQuotaReady $Quota $State)){return 'RecoveryReady'}
         return 'Wait'
     }
     if($goal.status -eq 'active') {
@@ -663,7 +668,7 @@ function Get-Decision($State, $Snapshot, $Quota, [long]$Now) {
     }
     if ($State.phase -in @('paused','queued')) {
         if ($active -or $Snapshot.threadRuntimeStatus.type -eq 'active' -or @($Snapshot.requests).Count) { return 'Wait' }
-        if ((Test-AutoResumeAllowed $State) -and $Quota.allowed -and (Test-ManagedQuotaReady $Quota)) { return 'RecoveryReady' }
+        if ((Test-AutoResumeAllowed $State) -and $Quota.allowed -and (Test-ManagedQuotaReady $Quota $State)) { return 'RecoveryReady' }
         return 'Wait'
     }
     if ($active -and (Test-QuotaPause $Quota)) { return 'Pause' }

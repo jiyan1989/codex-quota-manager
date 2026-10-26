@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'quota-monitor.ps1') -Library
 $script:Mode='Auto';$script:ResumeAll=$false;$script:ResumeThreadIds=@('chosen')
@@ -30,7 +30,7 @@ $script:QuotaBasis='weekly'
 if(Test-ManagedQuotaReady @{remaining=80;weeklyRemaining=$null;allowed=$true}){throw 'Unknown selected weekly quota allowed recovery'}
 if(!(Test-QuotaPause @{remaining=80;weeklyRemaining=$null;allowed=$true})){throw 'Unknown selected weekly quota did not protect active task'}
 $script:QuotaBasis='fiveHour'
-$state=@{phase='queued';threadId='chosen';manualStart=$true}
+$state=@{phase='queued';threadId='chosen';manualStart=$false}
 $reason=Get-RecoveryWaitReason $state $idle @{remaining=15;weeklyRemaining=1;allowed=$true}
 if($reason -notmatch '五小时' -or $reason -match '周剩余|周额度'){throw 'Five-hour-only wait reason mentions unselected weekly quota'}
 $checks+=3
