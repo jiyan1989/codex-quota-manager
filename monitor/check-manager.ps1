@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'quota-monitor.ps1') -Library
 $script:ResumeAll=$false
@@ -37,4 +37,14 @@ if((Get-Decision $state $active $quota 100) -ne 'Pause'){throw 'Custom pause thr
 $state=@{phase='paused';threadId='chosen';pausedTurnId='one';baselineMessageId='msg';manualStart=$true}
 $script:ResumeRemainingPercent=30;$quota.remaining=29
 if((Get-Decision $state $idle $quota 100) -ne 'Wait'){throw 'Custom recovery threshold was ignored'}
-Write-Host 'PASS 13 manager-specific scope, configurable thresholds, recovery switch and manual-hold checks. No real chats controlled.'
+$script:Mode='Auto'
+$script:PauseRemainingPercent=70;$script:WeeklyPauseRemainingPercent=70;$script:ResumeRemainingPercent=71
+$state=@{phase='queued';threadId='chosen';manualStart=$true;pausedTurnId='one';baselineMessageId='msg'}
+$quota=@{remaining=75;weeklyRemaining=65;allowed=$true}
+$reason=Get-RecoveryWaitReason $state $idle $quota
+if($reason -notmatch '65%' -or $reason -notmatch '71%' -or $reason -match '耗尽'){throw 'Threshold buffer was mislabeled as exhausted or missing numbers'}
+if((Get-Decision $state $idle $quota 100) -ne 'Wait'){throw 'Manual continue bypassed quota buffer'}
+if((Get-QuotaStatus $quota) -match '耗尽'){throw 'Positive weekly quota was labeled exhausted'}
+$quota.weeklyRemaining=0
+if((Get-QuotaStatus $quota) -ne '周额度耗尽'){throw 'Actual weekly exhaustion lost its status'}
+Write-Host 'PASS 17 manager-specific scope, configurable thresholds, recovery switch and manual-hold checks. No real chats controlled.'

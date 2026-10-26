@@ -46,6 +46,8 @@
 | 状态与日志 | 主界面显示连接、监控和数据新鲜度；设置中查看完整日志 |
 | 可选 MCP 集成 | 在 Codex 聊天中查询托管状态，显式登记任务或执行控制 |
 
+**手动继续也遵守额度保护：**五小时和周额度都必须达到恢复阈值。例如暂停设为 70%、恢复设为 71%，但周额度剩余 65%，请求会等待额度恢复，并显示具体数值。关闭自动续跑后，手动继续仍可登记；监控已停止时，手动继续会启动后台。
+
 **默认策略：**剩余额度不高于 10% 时暂停，至少恢复到 20% 才允许续跑；自动续跑开启，重置卡关闭，首次使用不选择任何任务。两项阈值都可以调整，恢复阈值必须高于暂停阈值。
 
 
@@ -82,6 +84,7 @@
 pwsh -NoProfile -File ./build.ps1
 pwsh -NoProfile -File ./test.ps1
 pwsh -NoProfile -File ./monitor/check-manager.ps1
+pwsh -NoProfile -File ./tools/check-ui-actions.ps1
 python -X utf8 ./integration/test_mcp.py
 ```
 

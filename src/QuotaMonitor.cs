@@ -90,7 +90,8 @@ class MonitorWindow : Form {
     Process worker;
     LogWindow viewer;
     Dictionary<string,object> lastState;
-    string lastChecked="", lastRendered="";
+    string lastChecked="", lastRendered="", actionFeedback="";
+    DateTime actionFeedbackUntil=DateTime.MinValue;
     DateTime startedAt=DateTime.Now;
     bool loading=true, stopRequested=false, exiting=false, allowClose=false, checkConfigured=false, checkFinished=false, choicesPassed=false, quotaDisplayPassed=false;
 
@@ -205,7 +206,7 @@ class MonitorWindow : Form {
         projectMenu.Items.Add("手动开始 / 继续",null,delegate {ProjectAction("Start");});
         projectMenu.Items.Add("登记自动继续（空闲 / 已结束也可）",null,delegate {ProjectAction("AutoContinue");});
         projectMenu.Items.Add("取消自动继续",null,delegate {ProjectAction("CancelAuto");});
-        projectMenu.Opening+=delegate(object sender,System.ComponentModel.CancelEventArgs e){e.Cancel=chats.CurrentRow==null;foreach(ToolStripItem item in projectMenu.Items)item.Enabled=!observe.Checked && !stopRequested;};
+        projectMenu.Opening+=delegate(object sender,System.ComponentModel.CancelEventArgs e){e.Cancel=chats.CurrentRow==null;foreach(ToolStripItem item in projectMenu.Items)item.Enabled=!observe.Checked && !(stopRequested && WorkerRunning());};
         chats.ContextMenuStrip=projectMenu;
         chats.CellMouseDown+=delegate(object sender,DataGridViewCellMouseEventArgs e){if(e.Button==MouseButtons.Right && e.RowIndex>=0){chats.ClearSelection();chats.CurrentCell=chats.Rows[e.RowIndex].Cells[1];chats.Rows[e.RowIndex].Selected=true;}};
         left.Controls.Add(chats,0,4);
@@ -245,6 +246,7 @@ class MonitorWindow : Form {
         selectedTask.Text=chats.CurrentRow==null?"选择需要控制的任务":Str(chats.CurrentRow.Cells[2].Value);
         string reason=chats.CurrentRow==null?"":Str(chats.CurrentRow.Cells[3].Value);taskState.Text=reason.Length>0?reason:running?"等待选择任务":"点击开始监控";
         if(!running)freshness.Text="监控已停止，额度与任务显示上次记录；点击“开始监控”重新查询。";
+        if(DateTime.UtcNow<actionFeedbackUntil){selectedTask.Text=actionFeedback;taskState.Text=actionFeedback;}
     }
     string StartupShortcut() {return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup),"Codex 任务托管.lnk");}
     void SetStartup(bool enabled) {
@@ -317,14 +319,26 @@ class MonitorWindow : Form {
         if(stopRequested && action!="Stop") return;
         AtomicJson(Path.Combine(stateDir,"control.json"),new {id=Guid.NewGuid().ToString(),action=action,time=DateTime.UtcNow.ToString("o")});
     }
+    void ShowActionFeedback(string message) {
+        actionFeedback=message;actionFeedbackUntil=DateTime.UtcNow.AddSeconds(15);
+        selectedTask.Text=message;taskState.Text=message;AppendLog(message);
+    }
     void ProjectAction(string action) {
-        if(chats.CurrentRow==null)return;
-        if(observe.Checked){AppendLog("只读观察模式不操作项目，请先取消只读观察。");return;}
-        if(stopRequested){AppendLog("正在停止监控，请稍后再操作。");return;}
+        if(chats.CurrentRow==null){ShowActionFeedback("请先选择一个任务。");return;}
+        if(observe.Checked){ShowActionFeedback("只读观察模式不操作任务，请先关闭只读观察。");return;}
+        if(stopRequested && WorkerRunning()){ShowActionFeedback("后台正在停止，请等待退出后再继续任务。");return;}
         string id=Str(chats.CurrentRow.Tag),title=Str(chats.CurrentRow.Cells[1].Value);
         try {
             if(action=="AutoContinue" || action=="CancelAuto"){
-                chats.CurrentRow.Cells[0].Value=action=="AutoContinue";SaveAndApply();
+                // Update selection without recursively submitting another project command.
+                loading=true;
+                try {
+                    bool enabled=action=="AutoContinue";chats.CurrentRow.Cells[0].Value=enabled;
+                    var ids=new HashSet<string>(config.resumeThreadIds);var excluded=new HashSet<string>(config.resumeExcludedThreadIds);
+                    if(enabled){ids.Add(id);excluded.Remove(id);}else{ids.Remove(id);excluded.Add(id);}
+                    config.resumeThreadIds=ids.ToArray();config.resumeExcludedThreadIds=excluded.ToArray();
+                } finally {loading=false;}
+                WriteSettings();
             }
             string directory=Path.Combine(stateDir,"commands");Directory.CreateDirectory(directory);
             AtomicJson(Path.Combine(directory,DateTime.UtcNow.Ticks.ToString("D20")+"-"+Guid.NewGuid().ToString()+".json"),new {id=Guid.NewGuid().ToString(),threadId=id,title=title,action=action,time=DateTime.UtcNow.ToString("o")});
@@ -333,8 +347,8 @@ class MonitorWindow : Form {
                 try {Process.Start(new ProcessStartInfo("codex://threads/"+id){UseShellExecute=true});AppendLog("正在 Codex 客户端打开未加载项目「"+title+"」，加载后执行已登记操作。");}
                 catch(Exception e){AppendLog("操作已登记，请在 Codex 客户端打开项目「"+title+"」；自动打开失败："+e.Message);}
             }
-            AppendLog("项目「"+title+"」操作已登记；实际暂停、开始和等待原因请看状态和日志。");
-        }catch(Exception e){AppendLog("项目操作登记失败："+e.Message);}
+            ShowActionFeedback(WorkerRunning() ? "操作已登记，正在核实额度与任务。" : "操作已保存，但后台未启动；请在设置中查看完整日志。");
+        }catch(Exception e){ShowActionFeedback("操作登记失败："+e.Message);}
     }
     void StopWorker() {
         if(!WorkerRunning()) return;

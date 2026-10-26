@@ -98,7 +98,8 @@ function Test-FailureLimitReached([int]$Failures) {
     return $MaxConsecutiveFailures -gt 0 -and $Failures -ge $MaxConsecutiveFailures
 }
 function Get-QuotaStatus($Quota) {
-    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return '周额度耗尽'}
+    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le 0){return '周额度耗尽'}
+    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return ('周额度剩余 '+$Quota.weeklyRemaining+'%，已达暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%')}
     if($Quota.remaining -le 0){return '五小时额度耗尽'}
     if($Quota.spendControlReached){return '账号消费上限已触发'}
     if(!$Quota.allowed){return '服务暂不允许使用，请查看客户端额度/账号提示'}
@@ -128,8 +129,9 @@ function Get-RecoveryWaitReason($State,$Snapshot,$Quota) {
     if($Mode -eq 'Monitor' -or $script:ObserveOnly){return '只读观察，不提交继续请求'}
     if(!$script:AutoResumeEnabled -and !$State.manualStart){return '自动继续已关闭；额度恢复后需手动继续'}
     if(!(Test-AutoResumeAllowed $State)){return '未勾选自动继续'}
-    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return '周额度已耗尽'}
-    if(!(Test-ManagedQuotaReady $Quota)){return ('等待额度恢复至 '+$script:ResumeRemainingPercent+'%')}
+    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le 0){return '周额度已耗尽'}
+    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return ('周额度剩余 '+$Quota.weeklyRemaining+'%，低于恢复阈值 '+$script:ResumeRemainingPercent+'%（暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%）')}
+    if(!(Test-ManagedQuotaReady $Quota)){return ('五小时剩余 '+$Quota.remaining+'%、周剩余 '+$Quota.weeklyRemaining+'%；需均恢复至 '+$script:ResumeRemainingPercent+'%')}
     if(!$Quota.allowed){return (Get-QuotaStatus $Quota)}
     if(@($Snapshot.requests).Count){return '等待你处理聊天内的输入或审批'}
     if((Get-ActiveTurn $Snapshot) -or $Snapshot.threadRuntimeStatus.type -eq 'active'){return '聊天仍在执行'}
