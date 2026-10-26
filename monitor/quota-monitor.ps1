@@ -24,6 +24,7 @@ $script:ResumeAll = $true
 $script:ResumeThreadIds = @()
 $script:ResumeExcludedThreadIds = @()
 $script:AutoResumeEnabled = $true
+$script:QuotaBasis = 'both'
 $script:ResumeRemainingPercent = -1
 $script:WeeklyPauseRemainingPercent = 0
 $script:AutoResetEnabled = $false
@@ -65,7 +66,10 @@ function Read-MonitorSettings {
     if($null -ne $settings.nearLimitRemainingPercent -and ($settings.nearLimitRemainingPercent -lt 0 -or $settings.nearLimitRemainingPercent -gt 100)){throw 'Invalid monitor settings.'}
     if($null -ne $settings.nearLimitPollSeconds -and ($settings.nearLimitPollSeconds -lt 1 -or $settings.nearLimitPollSeconds -gt 3600)){throw 'Invalid monitor settings.'}
     if($null -ne $settings.maxConsecutiveFailures -and ($settings.maxConsecutiveFailures -lt 0 -or $settings.maxConsecutiveFailures -gt 9999 -or $settings.maxConsecutiveFailures -ne [int]$settings.maxConsecutiveFailures)){throw 'Invalid monitor settings.'}
+    $basis=$(if($settings.quotaBasis){[string]$settings.quotaBasis}else{'both'})
+    if($basis -notin @('both','fiveHour','weekly')){throw 'Invalid quota basis.'}
     $previous=Get-MonitorPolicy | ConvertTo-Json -Compress
+    $script:QuotaBasis=$basis
     $script:PollSeconds=[int]$settings.pollSeconds
     $script:ConfiguredNearLimitPollSeconds=$(if($null -ne $settings.nearLimitPollSeconds){[int]$settings.nearLimitPollSeconds}else{$script:PollSeconds})
     $script:NearLimitPollSeconds=[Math]::Min($script:PollSeconds,$script:ConfiguredNearLimitPollSeconds)
@@ -85,7 +89,7 @@ function Read-MonitorSettings {
     if($previous -ne (Get-MonitorPolicy | ConvertTo-Json -Compress) -and $script:Journal){Write-Event 'settings-updated' @{pollSeconds=$PollSeconds;pauseRemainingPercent=$PauseRemainingPercent;observeOnly=$script:ObserveOnly;resumeAll=$script:ResumeAll;selectedCount=$script:ResumeThreadIds.Count;excludedCount=$script:ResumeExcludedThreadIds.Count;autoResetEnabled=$script:AutoResetEnabled;resetWeeklyRemainingPercent=$script:ResetWeeklyRemainingPercent}}
 }
 function Get-MonitorPolicy {
-    return [ordered]@{autoResumeEnabled=$script:AutoResumeEnabled;resumeRemainingPercent=$script:ResumeRemainingPercent;weeklyPauseRemainingPercent=$script:WeeklyPauseRemainingPercent;pollSeconds=$PollSeconds;nearLimitPollSeconds=$script:ConfiguredNearLimitPollSeconds;nearLimitRemainingPercent=$script:NearLimitRemainingPercent;maxConsecutiveFailures=$MaxConsecutiveFailures;pauseRemainingPercent=$PauseRemainingPercent;observeOnly=$script:ObserveOnly;resumeAll=$script:ResumeAll;resumeThreadIds=@($script:ResumeThreadIds | Sort-Object);resumeExcludedThreadIds=@($script:ResumeExcludedThreadIds | Sort-Object);autoResetEnabled=$script:AutoResetEnabled;resetWeeklyRemainingPercent=$script:ResetWeeklyRemainingPercent}
+    return [ordered]@{quotaBasis=$script:QuotaBasis;autoResumeEnabled=$script:AutoResumeEnabled;resumeRemainingPercent=$script:ResumeRemainingPercent;weeklyPauseRemainingPercent=$script:WeeklyPauseRemainingPercent;pollSeconds=$PollSeconds;nearLimitPollSeconds=$script:ConfiguredNearLimitPollSeconds;nearLimitRemainingPercent=$script:NearLimitRemainingPercent;maxConsecutiveFailures=$MaxConsecutiveFailures;pauseRemainingPercent=$PauseRemainingPercent;observeOnly=$script:ObserveOnly;resumeAll=$script:ResumeAll;resumeThreadIds=@($script:ResumeThreadIds | Sort-Object);resumeExcludedThreadIds=@($script:ResumeExcludedThreadIds | Sort-Object);autoResetEnabled=$script:AutoResetEnabled;resetWeeklyRemainingPercent=$script:ResetWeeklyRemainingPercent}
 }
 function Get-PollDelay($Quota,$Records,[int]$ActiveCount=-1) {
     $records=@($Records)
@@ -97,13 +101,22 @@ function Get-PollDelay($Quota,$Records,[int]$ActiveCount=-1) {
 function Test-FailureLimitReached([int]$Failures) {
     return $MaxConsecutiveFailures -gt 0 -and $Failures -ge $MaxConsecutiveFailures
 }
+function Test-QuotaPause($Quota) {
+    if(!$Quota.allowed){return $true}
+    $primary=$script:QuotaBasis -ne 'weekly' -and $Quota.remaining -le $PauseRemainingPercent
+    $weekly=$script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent
+    return $primary -or $weekly -or ($script:QuotaBasis -eq 'weekly' -and $null -eq $Quota.weeklyRemaining)
+}
 function Get-QuotaStatus($Quota) {
-    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le 0){return '周额度耗尽'}
-    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return ('周额度剩余 '+$Quota.weeklyRemaining+'%，已达暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%')}
-    if($Quota.remaining -le 0){return '五小时额度耗尽'}
     if($Quota.spendControlReached){return '账号消费上限已触发'}
+    if($script:QuotaBasis -eq 'weekly' -and $null -eq $Quota.weeklyRemaining){return '周额度未知，等待服务确认'}
+    if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){
+        if($Quota.weeklyRemaining -le 0){return '周额度耗尽'}
+        return ('周额度剩余 '+$Quota.weeklyRemaining+'%，已达暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%')
+    }
+    if($script:QuotaBasis -ne 'weekly' -and $Quota.remaining -le 0){return '五小时额度耗尽'}
+    if($script:QuotaBasis -ne 'weekly' -and $Quota.remaining -le $PauseRemainingPercent){return '达到暂停阈值'}
     if(!$Quota.allowed){return '服务暂不允许使用，请查看客户端额度/账号提示'}
-    if($Quota.remaining -le $PauseRemainingPercent){return '达到暂停阈值'}
     return '额度可用'
 }
 function Test-ManagedTask($State) {
@@ -129,9 +142,14 @@ function Get-RecoveryWaitReason($State,$Snapshot,$Quota) {
     if($Mode -eq 'Monitor' -or $script:ObserveOnly){return '只读观察，不提交继续请求'}
     if(!$script:AutoResumeEnabled -and !$State.manualStart){return '自动继续已关闭；额度恢复后需手动继续'}
     if(!(Test-AutoResumeAllowed $State)){return '未勾选自动继续'}
-    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le 0){return '周额度已耗尽'}
-    if($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return ('周额度剩余 '+$Quota.weeklyRemaining+'%，低于恢复阈值 '+$script:ResumeRemainingPercent+'%（暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%）')}
-    if(!(Test-ManagedQuotaReady $Quota)){return ('五小时剩余 '+$Quota.remaining+'%、周剩余 '+$Quota.weeklyRemaining+'%；需均恢复至 '+$script:ResumeRemainingPercent+'%')}
+    if(!$Quota.allowed){return (Get-QuotaStatus $Quota)}
+    if($script:QuotaBasis -eq 'weekly' -and $null -eq $Quota.weeklyRemaining){return '周额度未知，等待服务确认'}
+    if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le 0){return '周额度已耗尽'}
+    if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return ('周额度剩余 '+$Quota.weeklyRemaining+'%，低于恢复阈值 '+$script:ResumeRemainingPercent+'%（暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%）')}
+    if(!(Test-ManagedQuotaReady $Quota)){
+        $values=$(switch($script:QuotaBasis){'fiveHour'{"五小时剩余 $($Quota.remaining)%"}'weekly'{"周剩余 $($Quota.weeklyRemaining)%"}default{"五小时剩余 $($Quota.remaining)%、周剩余 $($Quota.weeklyRemaining)%"}})
+        return ($values+'；所选额度需恢复至 '+$script:ResumeRemainingPercent+'%')
+    }
     if(!$Quota.allowed){return (Get-QuotaStatus $Quota)}
     if(@($Snapshot.requests).Count){return '等待你处理聊天内的输入或审批'}
     if((Get-ActiveTurn $Snapshot) -or $Snapshot.threadRuntimeStatus.type -eq 'active'){return '聊天仍在执行'}
@@ -586,6 +604,8 @@ function Test-SameGoal($Goal,$Saved) {
 function Test-ManagedQuotaReady($Quota) {
     $primary=$(if($script:ResumeRemainingPercent -ge 0){$Quota.remaining -ge $script:ResumeRemainingPercent}else{$Quota.remaining -gt $PauseRemainingPercent})
     $weekly=$(if($null -eq $Quota.weeklyRemaining){$true}elseif($script:ResumeRemainingPercent -ge 0){$Quota.weeklyRemaining -ge $script:ResumeRemainingPercent}else{$Quota.weeklyRemaining -gt $script:WeeklyPauseRemainingPercent})
+    if($script:QuotaBasis -eq 'weekly'){return $Quota.allowed -and $null -ne $Quota.weeklyRemaining -and $weekly}
+    if($script:QuotaBasis -eq 'fiveHour'){return $Quota.allowed -and $primary}
     return $Quota.allowed -and $primary -and $weekly
 }
 
@@ -610,7 +630,7 @@ function Get-GoalDecision($State,$Snapshot,$Quota,[long]$Now) {
         return 'Wait'
     }
     if($goal.status -eq 'active') {
-        if($Quota.remaining -le $PauseRemainingPercent -or !$Quota.allowed -or ($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent)){return 'Pause'}
+        if(Test-QuotaPause $Quota){return 'Pause'}
         return 'Wait'
     }
     return $null
@@ -646,7 +666,7 @@ function Get-Decision($State, $Snapshot, $Quota, [long]$Now) {
         if ((Test-AutoResumeAllowed $State) -and $Quota.allowed -and (Test-ManagedQuotaReady $Quota)) { return 'RecoveryReady' }
         return 'Wait'
     }
-    if ($active -and ($Quota.remaining -le $PauseRemainingPercent -or !$Quota.allowed -or ($null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent))) { return 'Pause' }
+    if ($active -and (Test-QuotaPause $Quota)) { return 'Pause' }
     if (!$active -and $latest -and $latest.status -eq 'failed' -and $Snapshot.threadRuntimeStatus.type -ne 'active') { return 'Failed' }
     if (!$active -and $latest -and $latest.status -eq 'completed' -and $Snapshot.threadRuntimeStatus.type -ne 'active') { return 'Completed' }
     return 'Wait'

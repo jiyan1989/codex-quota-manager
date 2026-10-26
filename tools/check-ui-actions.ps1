@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 # Isolated WinForms regression: no Codex connections or real settings are used.
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
@@ -31,6 +31,10 @@ class ActionCheck {
  f.Show();Application.DoEvents();((Timer)Get(f,"timer")).Stop();
  var grid=(DataGridView)Get(f,"chats");Set(f,"loading",true);int row=grid.Rows.Add(false,"Fixture task","目标已暂停","保持手动暂停");grid.Rows[row].Tag="00000000-0000-0000-0000-000000000001";grid.CurrentCell=grid.Rows[row].Cells[1];Set(f,"loading",false);
  Assert((bool)Get(f,"stopRequested"),"no-start window represents stopped monitoring");
+ var basis=(ComboBox)Get(f,"quotaBasis");Assert(basis.SelectedIndex==0,"legacy settings default to both quota windows");
+ basis.SelectedIndex=1;Assert(File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"fiveHour\""),"five-hour selection is persisted");
+ basis.SelectedIndex=2;Assert(File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"weekly\""),"weekly selection is persisted");basis.SelectedIndex=0;
+
  Find(f).PerformClick();
  var commands=Path.Combine(state,"commands");Assert(Directory.GetFiles(commands,"*.json").Length==1,"Continue button queues one command while stopped");
  Assert(!(bool)Get(f,"stopRequested") && Get(f,"worker")!=null,"Continue starts isolated backend without manual monitoring step");

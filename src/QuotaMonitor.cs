@@ -17,6 +17,7 @@ public class MonitorSettings {
     public double pauseRemainingPercent = 10;
     public double resumeRemainingPercent = 20;
     public bool autoResumeEnabled = true;
+    public string quotaBasis = "both";
     public bool trayBackgroundEnabled = true;
     public double weeklyPauseRemainingPercent = 10;
     public bool observeOnly = false;
@@ -81,6 +82,7 @@ class MonitorWindow : Form {
     readonly Label connectionState=new Label(), monitorState=new Label(), quotaFreshState=new Label(), taskState=new Label();
     readonly Label selectedTask=new Label();
     string settingsSeen="";
+    readonly ComboBox quotaBasis=new ComboBox();
     string captureDir;
     readonly Button start=new Button(), apply=new Button(), refresh=new Button();
     readonly NotifyIcon tray=new NotifyIcon();
@@ -123,7 +125,7 @@ class MonitorWindow : Form {
         nearThreshold.Value=(decimal)Math.Max(0,Math.Min(100,config.nearLimitRemainingPercent));nearPoll.Value=Math.Max(1,Math.Min(3600,config.nearLimitPollSeconds));
         stopOnFailures.Checked=config.maxConsecutiveFailures>0;failureLimit.Value=Math.Max(1,Math.Min(9999,config.maxConsecutiveFailures>0 ? config.maxConsecutiveFailures : 5));failureLimit.Enabled=stopOnFailures.Checked;
         showAll.Checked=config.showAllProjects;
-        resumeThreshold.Value=(decimal)Math.Max(1,Math.Min(100,config.resumeRemainingPercent));autoResume.Checked=config.autoResumeEnabled;loginStart.Checked=File.Exists(StartupShortcut());
+        resumeThreshold.Value=(decimal)Math.Max(1,Math.Min(100,config.resumeRemainingPercent));autoResume.Checked=config.autoResumeEnabled;quotaBasis.SelectedIndex=BasisIndex(config.quotaBasis);loginStart.Checked=File.Exists(StartupShortcut());
         loading=false;
         WriteSettings();
         var trayMenu=new ContextMenuStrip();
@@ -214,15 +216,16 @@ class MonitorWindow : Form {
         var actions=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,BackColor=Color.White};actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,158));actions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,158));actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         var pause=new ActionButton{Text="Ⅱ  暂停任务",Primary=true,Dock=DockStyle.Fill};pause.Click+=delegate{ProjectAction("Pause");};actions.Controls.Add(pause,0,0);var resume=new ActionButton{Text="▶  继续任务",Dock=DockStyle.Fill};resume.Click+=delegate{ProjectAction("Start");};actions.Controls.Add(resume,1,0);selectedTask.Dock=DockStyle.Fill;selectedTask.ForeColor=Theme.Muted;selectedTask.TextAlign=ContentAlignment.MiddleLeft;selectedTask.AutoEllipsis=true;actions.Controls.Add(selectedTask,2,0);left.Controls.Add(actions,0,6);targets.Controls.Add(left);content.Controls.Add(targets,0,0);
         var right=Rows(192,12,192,12,-1);right.BackColor=BackColor;five.Margin=week.Margin=new Padding(0);right.Controls.Add(five,0,0);right.Controls.Add(week,0,2);
-        var policy=new SurfacePanel{Dock=DockStyle.Fill,Padding=new Padding(18,12,18,12)};var rules=Rows(35,43,39,39,28,-1);rules.Controls.Add(Heading("✿  自动策略",19),0,0);
-        var limits=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,BackColor=Color.White};threshold.Width=57;resumeThreshold.Width=57;threshold.Margin=resumeThreshold.Margin=new Padding(0,5,4,0);limits.Controls.Add(Inline("暂停"));limits.Controls.Add(threshold);limits.Controls.Add(Inline("%    恢复"));limits.Controls.Add(resumeThreshold);limits.Controls.Add(Inline("%"));rules.Controls.Add(limits,0,1);
-        rules.Controls.Add(SwitchRow("额度恢复后自动续跑",autoResume),0,2);rules.Controls.Add(SwitchRow("自动使用已有重置卡",autoReset),0,3);
-        cardInfo.Dock=DockStyle.Fill;cardInfo.ForeColor=Theme.Muted;rules.Controls.Add(cardInfo,0,4);policySummary.Dock=DockStyle.Fill;policySummary.ForeColor=Theme.Muted;policySummary.AutoEllipsis=true;rules.Controls.Add(policySummary,0,5);policy.Controls.Add(rules);right.Controls.Add(policy,0,4);content.Controls.Add(right,1,0);root.Controls.Add(content,0,1);
+        var policy=new SurfacePanel{Dock=DockStyle.Fill,Padding=new Padding(18,12,18,12)};var rules=Rows(31,33,37,39,39,25,-1);rules.Controls.Add(Heading("✿  自动策略",19),0,0);var basisRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2};basisRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,78));basisRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));basisRow.Controls.Add(Inline("判断依据"),0,0);quotaBasis.DropDownStyle=ComboBoxStyle.DropDownList;quotaBasis.Items.AddRange(new object[]{"五小时和周额度","仅五小时额度","仅周额度"});quotaBasis.Dock=DockStyle.Fill;quotaBasis.AccessibleName="额度判断依据";basisRow.Controls.Add(quotaBasis,1,0);rules.Controls.Add(basisRow,0,1);
+        var limits=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,BackColor=Color.White};threshold.Width=57;resumeThreshold.Width=57;threshold.Margin=resumeThreshold.Margin=new Padding(0,5,4,0);limits.Controls.Add(Inline("暂停"));limits.Controls.Add(threshold);limits.Controls.Add(Inline("%    恢复"));limits.Controls.Add(resumeThreshold);limits.Controls.Add(Inline("%"));rules.Controls.Add(limits,0,2);
+        rules.Controls.Add(SwitchRow("额度恢复后自动续跑",autoResume),0,3);rules.Controls.Add(SwitchRow("自动使用已有重置卡",autoReset),0,4);
+        cardInfo.Dock=DockStyle.Fill;cardInfo.ForeColor=Theme.Muted;rules.Controls.Add(cardInfo,0,5);policySummary.Dock=DockStyle.Fill;policySummary.ForeColor=Theme.Muted;policySummary.AutoEllipsis=true;rules.Controls.Add(policySummary,0,6);policy.Controls.Add(rules);right.Controls.Add(policy,0,4);content.Controls.Add(right,1,0);root.Controls.Add(content,0,1);
         var status=new SurfacePanel{Dock=DockStyle.Fill,Padding=new Padding(20,12,20,10)};var statusRows=Rows(31,49,25);statusRows.Controls.Add(Heading("▤  连接与运行状态",18),0,0);
         var metrics=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=4,BackColor=Color.White};for(int i=0;i<4;i++)metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,25));
         var values=new[]{connectionState,monitorState,quotaFreshState,taskState};var captions=new[]{"客户端连接","监控状态","额度数据","任务与等待原因"};for(int i=0;i<4;i++){var metric=Rows(20,27);metric.Controls.Add(new Label{Text=captions[i],Dock=DockStyle.Fill,ForeColor=Theme.Muted},0,0);values[i].Dock=DockStyle.Fill;values[i].AutoEllipsis=true;values[i].ForeColor=Theme.Ink;values[i].Font=new Font("Microsoft YaHei UI",10,FontStyle.Bold);metric.Controls.Add(values[i],0,1);metrics.Controls.Add(metric,i,0);}statusRows.Controls.Add(metrics,0,1);freshness.Dock=DockStyle.Fill;freshness.ForeColor=Theme.Muted;statusRows.Controls.Add(freshness,0,2);status.Controls.Add(statusRows);root.Controls.Add(status,0,2);Controls.Add(root);
         threshold.ValueChanged+=delegate{if(!loading){if(resumeThreshold.Value<=threshold.Value)resumeThreshold.Value=threshold.Value+1;SaveAndApply();}};
         resumeThreshold.ValueChanged+=delegate{if(!loading){if(resumeThreshold.Value<=threshold.Value)threshold.Value=resumeThreshold.Value-1;SaveAndApply();}};
+        quotaBasis.SelectedIndexChanged+=delegate{if(!loading)SaveAndApply();};
         autoResume.CheckedChanged+=delegate{if(!loading)SaveAndApply();};autoReset.CheckedChanged+=delegate{if(!loading)SaveAndApply();};
         loginStart.CheckedChanged+=delegate{if(!loading){try{SetStartup(loginStart.Checked);}catch(Exception e){AppendLog("自启动设置失败："+e.Message);}}};
         chats.SelectionChanged+=delegate{UpdateStatusPanel();};
@@ -260,7 +263,9 @@ class MonitorWindow : Form {
         lt.InvokeMember("Save",BindingFlags.InvokeMethod,null,link,new object[0]);
         Marshal.ReleaseComObject(link);Marshal.ReleaseComObject(shell);
     }
+    static int BasisIndex(string basis){return basis=="fiveHour"?1:basis=="weekly"?2:0;}
     void WriteSettings() {
+        config.quotaBasis=quotaBasis.SelectedIndex==1?"fiveHour":quotaBasis.SelectedIndex==2?"weekly":"both";
         config.pollSeconds=(int)poll.Value; config.pauseRemainingPercent=(double)threshold.Value;
         config.weeklyPauseRemainingPercent=config.pauseRemainingPercent;config.resumeRemainingPercent=(double)resumeThreshold.Value;config.autoResumeEnabled=autoResume.Checked;
         config.observeOnly=observe.Checked; config.resumeAll=resumeAll.Checked;
@@ -401,7 +406,7 @@ class MonitorWindow : Form {
         return runtime=="执行中" || runtime=="目标待续" || runtime=="额度中断" || runtime=="等待输入或审批" || new[]{"observing","paused","queued","held","pause_pending","resume_submitting","needs_attention"}.Contains(phase) || Str(Get(chat,"waitReason")).Length>0;
     }
     void UpdateScreen() {
-        policySummary.Text="阈值均指剩余额度 · 不自动购买额度\n"+(config.autoResetEnabled?"周剩余 ≤"+config.resetWeeklyRemainingPercent+"%时尝试一张已有重置卡":"重置卡默认关闭；仅在你开启后使用");
+        policySummary.Text="按所选额度判断 · 服务拒绝时不继续\n"+(config.autoResetEnabled?"周剩余 ≤"+config.resetWeeklyRemainingPercent+"%时尝试一张已有重置卡":"重置卡默认关闭；仅在你开启后使用");
         try {
             if(File.Exists(settingsPath)) {
                 string currentSettings=ReadShared(settingsPath);
@@ -413,7 +418,7 @@ class MonitorWindow : Form {
                         if(config.resumeExcludedThreadIds==null)config.resumeExcludedThreadIds=new string[0];
                         resumeAll.Checked=config.resumeAll;observe.Checked=config.observeOnly;showAll.Checked=config.showAllProjects;
                         poll.Value=config.pollSeconds;threshold.Value=(decimal)config.pauseRemainingPercent;
-                        nearThreshold.Value=(decimal)config.nearLimitRemainingPercent;nearPoll.Value=config.nearLimitPollSeconds;resumeThreshold.Value=(decimal)config.resumeRemainingPercent;autoResume.Checked=config.autoResumeEnabled;
+                        nearThreshold.Value=(decimal)config.nearLimitRemainingPercent;nearPoll.Value=config.nearLimitPollSeconds;resumeThreshold.Value=(decimal)config.resumeRemainingPercent;autoResume.Checked=config.autoResumeEnabled;quotaBasis.SelectedIndex=BasisIndex(config.quotaBasis);
                         autoReset.Checked=config.autoResetEnabled;loading=false;settingsSeen=currentSettings;lastRendered="";
                     }
                 }
