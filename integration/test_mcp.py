@@ -5,9 +5,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec=importlib.util.spec_from_file_location('manager',Path(__file__).with_name('manager_mcp.py'))
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+
+original_ensure_runner=m.ensure_runner
 
 class Tests(unittest.TestCase):
     def setUp(self):
@@ -36,6 +39,15 @@ class Tests(unittest.TestCase):
         m.configure(dict(observeOnly=True))
         self.assertTrue(m.read(m.SETTINGS)['autoResetEnabled'])
         self.assertTrue(m.status()['reset_cards_enabled'])
+    def test_stopped_backend_requests_wakeup(self):
+        with patch.object(m,'status',return_value={'running':False}), patch.object(m.subprocess,'Popen') as spawn:
+            original_ensure_runner()
+            self.assertIn('--start-monitor',spawn.call_args.args[0])
+            self.assertIn('--tray',spawn.call_args.args[0])
+    def test_live_backend_does_not_spawn(self):
+        with patch.object(m,'status',return_value={'running':True}), patch.object(m.subprocess,'Popen') as spawn:
+            original_ensure_runner()
+            spawn.assert_not_called()
     def test_protocol_read_only(self):
         data='\n'.join(json.dumps(x) for x in [dict(jsonrpc='2.0',id=1,method='initialize',params=dict(protocolVersion='2024-11-05')),dict(jsonrpc='2.0',id=2,method='tools/list')])+'\n'
         result=subprocess.run([sys.executable,'-X','utf8',str(Path(__file__).with_name('manager_mcp.py'))],input=data,text=True,capture_output=True,check=True,encoding='utf8')

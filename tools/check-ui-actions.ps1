@@ -25,16 +25,26 @@ class ActionCheck {
  static void Call(object f,string n,params object[] a){f.GetType().GetMethod(n,BindingFlags.NonPublic|BindingFlags.Instance).Invoke(f,a);}
  static Button Find(Control c){foreach(Control x in c.Controls){if(x is Button && x.Text.Contains("继续任务"))return (Button)x;var b=Find(x);if(b!=null)return b;}return null;}
  static void Assert(bool ok,string message){if(!ok)throw new Exception(message);Console.WriteLine("PASS "+message);}
- [STAThread] static int Main(){try{Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
+ static System.Collections.Generic.IEnumerable<Control> All(Control parent){foreach(Control c in parent.Controls){yield return c;foreach(Control child in All(c))yield return child;}}
+ [STAThread] static int Main(string[] args){try{if(args.Length==2 && args[0]=="--wake-event")return Program.SignalWakeEvent(args[1])?0:2;Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
  var root=AppDomain.CurrentDomain.BaseDirectory;var state=Path.Combine(root,"state");Directory.CreateDirectory(state);
  using(var f=new MonitorWindow(new[]{"--no-start","--settings",Path.Combine(root,"settings.json"),"--state-directory",state})){
  f.Show();Application.DoEvents();((Timer)Get(f,"timer")).Stop();
  var grid=(DataGridView)Get(f,"chats");Set(f,"loading",true);int row=grid.Rows.Add(false,"Fixture task","目标已暂停","保持手动暂停");grid.Rows[row].Tag="00000000-0000-0000-0000-000000000001";grid.CurrentCell=grid.Rows[row].Cells[1];Set(f,"loading",false);
  Assert((bool)Get(f,"stopRequested"),"no-start window represents stopped monitoring");
- var basis=(ComboBox)Get(f,"quotaBasis");Assert(basis.SelectedIndex==0,"legacy settings default to both quota windows");
- basis.SelectedIndex=1;Assert(File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"fiveHour\""),"five-hour selection is persisted");
- basis.SelectedIndex=2;Assert(File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"weekly\""),"weekly selection is persisted");basis.SelectedIndex=0;
-
+ Assert(!All(f).Any(c=>c is ComboBox),"main screen has no quota basis dropdown");
+ using(var settings=(Form)f.GetType().GetMethod("CreateSettingsDialog",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(f,null)){
+ settings.Show(f);Application.DoEvents();var cards=All(settings).OfType<ChoiceCard>().ToArray();Assert(cards.Length==3,"settings contains three annotated choice cards");
+ Assert(cards.Single(c=>(string)c.Tag=="both").Checked,"legacy settings default to both windows");
+ cards.Single(c=>(string)c.Tag=="fiveHour").Checked=true;Assert(File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"fiveHour\""),"five-hour card persists selection");
+ cards.Single(c=>(string)c.Tag=="weekly").Checked=true;Assert(cards.Count(c=>c.Checked)==1 && File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"weekly\""),"weekly card is exclusive and persists selection");cards.Single(c=>(string)c.Tag=="both").Checked=true;
+ Assert(cards.All(c=>c.Description.Length>20),"all choices explain pause and recovery behavior");settings.Close();}
+ var wakeName=Program.WakeEventName(new[]{"--settings",Path.Combine(root,"settings.json")});
+ using(var child=Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--wake-event "+wakeName){UseShellExecute=false,CreateNoWindow=true})){child.WaitForExit();Assert(child.ExitCode==0,"second process signals existing window wake event");}
+ Call(f,"ProcessWakeRequest");Assert(Get(f,"worker")!=null && !(bool)Get(f,"stopRequested"),"wake starts stopped background monitor");
+ Set(f,"stopRequested",true);((System.Threading.EventWaitHandle)Get(f,"wakeEvent")).Set();Call(f,"ProcessWakeRequest");Assert((bool)Get(f,"wakePending"),"wake is retained while previous background is stopping");
+ Set(f,"worker",null);Call(f,"ProcessWakeRequest");Assert(Get(f,"worker")!=null && !(bool)Get(f,"wakePending"),"retained wake starts backend after shutdown");
+ Set(f,"worker",null);Set(f,"stopRequested",true);
  Find(f).PerformClick();
  var commands=Path.Combine(state,"commands");Assert(Directory.GetFiles(commands,"*.json").Length==1,"Continue button queues one command while stopped");
  Assert(!(bool)Get(f,"stopRequested") && Get(f,"worker")!=null,"Continue starts isolated backend without manual monitoring step");

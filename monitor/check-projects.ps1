@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'quota-monitor.ps1') -Library -All -Mode Auto -RecoveryConfirmSeconds 1
 $script:Checks=0;$script:ThreadId='00000000-0000-0000-0000-000000000001';$script:AccountId='mock-account'
@@ -43,9 +43,9 @@ Assert ((Get-Decision $script:Journal $s $low 110) -eq 'Wait') 'manual start wai
 $s.requests=@(@{type='approval'})
 Assert ((Get-Decision $script:Journal $s $q 111) -eq 'Wait') 'manual registration waits for existing approval or input'
 $s.requests=@();Command 'CancelAuto';Apply-ThreadCommand $s
-Assert ($script:Journal.phase -eq 'held' -and (Get-AutoResumePendingCount @($script:Journal)) -eq 0) 'cancel registration clears queued one-shot intent'
+Assert ($script:Journal.phase -eq 'cancelled' -and (Get-AutoResumePendingCount @($script:Journal)) -eq 0) 'cancel registration clears queued one-shot intent'
 $script:ObserveOnly=$true;$before=$script:Calls.Count;Command 'Start';Apply-ThreadCommand $s
-Assert ($script:Calls.Count -eq $before -and $script:Journal.phase -eq 'held') 'read-only mode rejects manual controls'
+Assert ($script:Calls.Count -eq $before -and $script:Journal.phase -eq 'cancelled') 'read-only mode rejects manual controls'
 $script:ObserveOnly=$false
 $script:Journal=New-ThreadJournal $ThreadId 'any-version';$s.threadGoal=@{status='paused';objective='mock goal';createdAt=1;updatedAt=2;tokenBudget=1000}
 Command 'AutoContinue';Apply-ThreadCommand $s

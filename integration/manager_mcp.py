@@ -84,7 +84,7 @@ def tasks(query=''):
 def ensure_runner():
     if status()['running']: return
     flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
-    subprocess.Popen([str(ROOT / 'dist' / 'CodexQuotaMonitor.exe'), '--tray'],
+    subprocess.Popen([str(ROOT / 'dist' / 'CodexQuotaMonitor.exe'), '--tray', '--start-monitor'],
                      creationflags=flags, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def configure(change):
@@ -112,7 +112,7 @@ def manage(thread_id, action):
                time=datetime.now(timezone.utc).isoformat()))
     ensure_runner()
     return dict(queued=True, request_id=request_id, thread_id=thread_id, action=action,
-                note='操作已登记，不代表执行已确认。查询该任务的状态及等待原因。未加载的聊天需先在 Codex 中打开。')
+                note='操作已登记，不代表执行已确认。查询该任务的状态及等待原因。未加载的原聊天在条件满足后自动打开；以实际状态为准。')
 
 TOOLS = [
     dict(name='quota_status', description='查询本机额度托管器实际存活、额度新鲜度和配置；不调用模型。', inputSchema=dict(type='object', properties={})),

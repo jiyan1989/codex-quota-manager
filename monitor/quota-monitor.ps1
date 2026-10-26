@@ -109,7 +109,7 @@ function Test-QuotaPause($Quota) {
 }
 function Get-QuotaStatus($Quota) {
     if($Quota.spendControlReached){return '账号消费上限已触发'}
-    if($script:QuotaBasis -eq 'weekly' -and $null -eq $Quota.weeklyRemaining){return '周额度未知，等待服务确认'}
+    if($script:QuotaBasis -ne 'fiveHour' -and $null -eq $Quota.weeklyRemaining){return '周额度未知，等待服务确认'}
     if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){
         if($Quota.weeklyRemaining -le 0){return '周额度耗尽'}
         return ('周额度剩余 '+$Quota.weeklyRemaining+'%，已达暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%')
@@ -143,11 +143,12 @@ function Get-RecoveryWaitReason($State,$Snapshot,$Quota) {
     if(!$script:AutoResumeEnabled -and !$State.manualStart){return '自动继续已关闭；额度恢复后需手动继续'}
     if(!(Test-AutoResumeAllowed $State)){return '未勾选自动继续'}
     if(!$Quota.allowed){return (Get-QuotaStatus $Quota)}
+    if($script:QuotaBasis -ne 'fiveHour' -and $null -eq $Quota.weeklyRemaining){return '周额度未知，等待服务确认'}
+    if($script:QuotaBasis -ne 'weekly' -and $null -eq $Quota.remaining){return '五小时额度未知，等待服务确认'}
     if($State.manualStart -and !(Test-ManagedQuotaReady $Quota $State)){
         $values=$(switch($script:QuotaBasis){'fiveHour'{"五小时剩余 $($Quota.remaining)%"}'weekly'{"周剩余 $($Quota.weeklyRemaining)%"}default{"五小时剩余 $($Quota.remaining)%、周剩余 $($Quota.weeklyRemaining)%"}})
         return ($values+'；手动继续需高于暂停阈值 '+$PauseRemainingPercent+'%')
     }
-    if($script:QuotaBasis -eq 'weekly' -and $null -eq $Quota.weeklyRemaining){return '周额度未知，等待服务确认'}
     if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le 0){return '周额度已耗尽'}
     if($script:QuotaBasis -ne 'fiveHour' -and $null -ne $Quota.weeklyRemaining -and $Quota.weeklyRemaining -le $script:WeeklyPauseRemainingPercent){return ('周额度剩余 '+$Quota.weeklyRemaining+'%，低于恢复阈值 '+$script:ResumeRemainingPercent+'%（暂停阈值 '+$script:WeeklyPauseRemainingPercent+'%）')}
     if(!(Test-ManagedQuotaReady $Quota $State)){
@@ -243,6 +244,7 @@ function Get-ChineseEvent($Name,$Details) {
         'completed' { return "$label 的本轮执行已结束，不据此判定整个项目已完成。" }
         'failed' {return "$label 的本轮执行失败，请查看客户端错误；不作为项目完成。"}
         'quota-interrupted' {return "$label 因额度不足中断，已登记等待恢复；勾选自动继续且额度通过检查后继续。"}
+        'manual-unmanaged' {return "已取消$label 的托管，不再自动暂停或继续。"}
         'manual-registered' {return "$label 已登记自动继续，包含空闲或已结束的任务；额度可用后提交一次继续请求。"}
         'manual-command-queued' {
             $action=switch($Details.action){'Pause'{'手动暂停'}'Start'{'手动开始'}'AutoContinue'{'登记自动继续'}'CancelAuto'{'取消自动继续'}}
@@ -606,6 +608,8 @@ function Test-SameGoal($Goal,$Saved) {
     return $null -ne $Goal -and $null -ne $Saved -and $Goal.createdAt -eq $Saved.createdAt -and $Goal.objective -eq $Saved.objective -and $Goal.tokenBudget -eq $Saved.tokenBudget
 }
 function Test-ManagedQuotaReady($Quota,$State=$null) {
+    if($script:QuotaBasis -ne 'fiveHour' -and $null -eq $Quota.weeklyRemaining){return $false}
+    if($script:QuotaBasis -ne 'weekly' -and $null -eq $Quota.remaining){return $false}
     if($State.manualStart){return $Quota.allowed -and !(Test-QuotaPause $Quota)}
     $primary=$(if($script:ResumeRemainingPercent -ge 0){$Quota.remaining -ge $script:ResumeRemainingPercent}else{$Quota.remaining -gt $PauseRemainingPercent})
     $weekly=$(if($null -eq $Quota.weeklyRemaining){$true}elseif($script:ResumeRemainingPercent -ge 0){$Quota.weeklyRemaining -ge $script:ResumeRemainingPercent}else{$Quota.weeklyRemaining -gt $script:WeeklyPauseRemainingPercent})
@@ -615,6 +619,7 @@ function Test-ManagedQuotaReady($Quota,$State=$null) {
 }
 
 function Get-GoalDecision($State,$Snapshot,$Quota,[long]$Now) {
+    if(!(Test-ManagedTask $State) -and !$State.forcePause){return 'Wait'}
     $goal=$Snapshot.threadGoal;$active=Get-ActiveTurn $Snapshot
     if($State.pausedForGoal -and $State.phase -in @('pause_pending','paused','queued','resume_submitting')) {
         if(!$goal -or $goal.status -eq 'complete') { return $(if($State.phase -eq 'resume_submitting' -and $Snapshot.latestTurnStartMessageId -eq $State.resumeMessageId){'ResumeConfirmed'}else{'Completed'}) }
@@ -641,7 +646,7 @@ function Get-GoalDecision($State,$Snapshot,$Quota,[long]$Now) {
     return $null
 }
 function Get-Decision($State, $Snapshot, $Quota, [long]$Now) {
-    if($State.phase -eq "observing" -and !(Test-ManagedTask $State) -and !$State.forcePause){return "Wait"}
+    if(!(Test-ManagedTask $State) -and !$State.forcePause){return "Wait"}
     $active = Get-ActiveTurn $Snapshot
     $turns = @(Get-Turns $Snapshot)
     $latest = $(if ($turns.Count) {$turns[-1]} else {$null})
@@ -781,13 +786,14 @@ function Apply-ThreadCommand($Snapshot) {
     if(!$command){return}
     $active=Get-ActiveTurn $Snapshot
     $record.pendingCommand=$null;$record.lastManualCommandId=$command.id
+    if($command.action -eq 'CancelAuto'){
+        $record.manualStart=$false;$record.manualHold=$true;$record.forcePause=$false
+        $record.recoverySeenAt=$null;$record.phase='cancelled'
+        $record.loadRequestedAt=$null;$record.loadError=$null
+        Save-Journal;Write-Event 'manual-unmanaged';return
+    }
     if($Mode -eq 'Monitor' -or $script:ObserveOnly){Save-Journal;Write-Event 'manual-rejected' @{reason='只读观察模式不操作项目。'};return}
     if($record.phase -in @('pause_pending','resume_submitting')){Save-Journal;Write-Event 'manual-rejected' @{reason='上一次操作仍待确认，请等待结果后再操作。'};return}
-    if($command.action -eq 'CancelAuto'){
-        $record.manualStart=$false;$record.manualHold=$true
-        if($record.phase -eq 'queued'){$record.phase='held'}
-        Save-Journal;Write-Event 'manual-held';return
-    }
     if($command.action -eq 'Pause'){
         $record.manualHold=$true;$record.manualStart=$false
         if($active -or $Snapshot.threadGoal.status -eq 'active'){$record.phase='observing';$record.forcePause=$true;Save-Journal}
@@ -806,6 +812,44 @@ function Apply-ThreadCommand($Snapshot) {
     if($record.pausedForGoal){$g=$Snapshot.threadGoal;$record.pausedGoal=@{objective=$g.objective;createdAt=$g.createdAt;tokenBudget=$g.tokenBudget};$record.pausedGoalUpdatedAt=$g.updatedAt}
     Set-Phase 'queued';Write-Event $(if($record.manualStart){'manual-start'}else{'manual-registered'})
     if($record.manualStart){$record.recoverySeenAt=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-$RecoveryConfirmSeconds*1000;Save-Journal}
+}
+function Open-DesktopThread([string]$Id) {
+    if($Id -notmatch '^[0-9a-fA-F-]{36}$'){throw 'Invalid original thread identifier.'}
+    $info=[Diagnostics.ProcessStartInfo]::new('codex://threads/'+$Id)
+    $info.UseShellExecute=$true
+    [void][Diagnostics.Process]::Start($info)
+}
+function Request-UnloadedThreads($Fleet,$Catalog,$Owners,$Quota) {
+    if($Mode -ne 'Auto' -or $script:ObserveOnly){return}
+    $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    foreach($id in @($Fleet.threads.Keys)) {
+        $record=$Fleet.threads[$id]
+        if($id -notin $Catalog.ids){continue}
+        if($Owners.ContainsKey($id)){
+            $record.loadRequestedAt=$null;$record.loadError=$null;$record.loadAttempts=0
+            continue
+        }
+        $candidate=$record.Clone()
+        if($record.pendingCommand){
+            if($record.pendingCommand.action -notin @('Start','AutoContinue')){continue}
+            $candidate.manualStart=$record.pendingCommand.action -eq 'Start'
+            $candidate.manualHold=$false;$candidate.phase='queued'
+        } elseif($candidate.phase -notin @('paused','queued')){continue}
+        if(!(Test-ManagedTask $candidate) -or !(Test-AutoResumeAllowed $candidate) -or !(Test-ManagedQuotaReady $Quota $candidate)){continue}
+        $delay=$(if([int]$record.loadAttempts -lt 1){15}elseif([int]$record.loadAttempts -lt 3){60}else{300})
+        if($record.loadRequestedAt -and $now-[long]$record.loadRequestedAt -lt $delay){continue}
+        # Persist before opening so restarts cannot produce a burst of repeated opens.
+        $record.loadRequestedAt=$now;$record.loadAttempts=1+[int]$record.loadAttempts;$record.loadError=$null
+        Save-Journal
+        try {Open-DesktopThread $id;Write-Event 'original-chat-load-requested' @{threadId=$id;attempt=$record.loadAttempts}}
+        catch {$record.loadError='无法自动打开原聊天，请检查 Codex 是否已安装并保持登录。';Write-Event 'original-chat-load-error' @{threadId=$id;error=$_.Exception.Message}}
+    }
+}
+function Get-UnloadedWaitReason($Record) {
+    if($Record.loadError){return $Record.loadError}
+    if($Record.loadRequestedAt){return '正在自动加载原聊天；等待客户端确认'}
+    if($Record.pendingCommand.action -in @('Start','AutoContinue')){return '操作已登记；额度和续跑条件满足后自动加载原聊天'}
+    return '等待客户端加载聊天'
 }
 function Start-AllMonitor {
     $rootDirectory=$script:RunDirectory; $script:ThreadId='all'
@@ -841,6 +885,7 @@ function Start-AllMonitor {
             $catalog=Get-DesktopCatalog
             Write-Event 'checking-owners' @{count=$catalog.ids.Count}
             $owners=Get-DesktopOwners $catalog.ids
+            Request-UnloadedThreads $fleet $catalog $owners $quota
             Write-Event 'checking-task-state' @{count=$owners.Count}
             $snapshots=Get-DesktopSnapshots $owners
             $fleet.chats=@()
@@ -902,7 +947,7 @@ function Start-AllMonitor {
             foreach($chat in $fleet.chats){
                 $record=$fleet.threads[$chat.id];$chat.monitorPhase=$record.phase
                 $chat.runtime=Get-ThreadRuntimeLabel $snapshots[$chat.id];$chat.goalStatus=$snapshots[$chat.id].threadGoal.status
-                if($record){$chat.waitReason=$(if($record.pendingCommand){'操作已登记，等待客户端加载该聊天'}else{Get-RecoveryWaitReason $record $snapshots[$chat.id] $quota})}
+                if($record){$chat.waitReason=$(if(!$snapshots[$chat.id] -and ($record.pendingCommand -or $record.loadRequestedAt -or $record.loadError)){Get-UnloadedWaitReason $record}else{Get-RecoveryWaitReason $record $snapshots[$chat.id] $quota})}
             }
             $fleet.lastCheckedAt=[DateTimeOffset]::UtcNow.ToString('o')
             $fleet.readFailureCount=0

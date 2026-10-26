@@ -37,6 +37,24 @@ class ActionButton : Button {
     }
 }
 
+class ChoiceCard : RadioButton {
+    public string Description="";
+    public ChoiceCard(){AutoSize=false;Cursor=Cursors.Hand;SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);}
+    protected override void OnCheckedChanged(EventArgs e){base.OnCheckedChanged(e);Invalidate();}
+    protected override void OnPaint(PaintEventArgs e){
+        e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;e.Graphics.Clear(Parent==null?Color.White:Parent.BackColor);
+        using(var shape=Theme.Round(new RectangleF(1,1,Width-3,Height-3),12)){
+            using(var brush=new SolidBrush(Checked?Color.FromArgb(233,242,255):Color.White))e.Graphics.FillPath(brush,shape);
+            using(var pen=new Pen(Checked?Theme.Blue:Theme.Border,Checked?2:1))e.Graphics.DrawPath(pen,shape);
+        }
+        using(var font=new Font(Font.FontFamily,11,FontStyle.Bold))TextRenderer.DrawText(e.Graphics,Text,font,new Rectangle(14,14,Width-46,25),Checked?Theme.Blue:Theme.Ink,TextFormatFlags.Left|TextFormatFlags.VerticalCenter);
+        using(var font=new Font(Font.FontFamily,9))TextRenderer.DrawText(e.Graphics,Description,font,new Rectangle(14,45,Width-28,Height-52),Theme.Muted,TextFormatFlags.Left|TextFormatFlags.Top|TextFormatFlags.WordBreak);
+        using(var pen=new Pen(Checked?Theme.Blue:Color.FromArgb(191,202,217),2))e.Graphics.DrawEllipse(pen,Width-28,18,13,13);
+        if(Checked)using(var brush=new SolidBrush(Theme.Blue))e.Graphics.FillEllipse(brush,Width-25,21,7,7);
+        if(Focused)ControlPaint.DrawFocusRectangle(e.Graphics,new Rectangle(6,6,Width-12,Height-12));
+    }
+}
+
 class ToggleSwitch : CheckBox {
     public ToggleSwitch(){AutoSize=false;Size=new Size(54,28);Cursor=Cursors.Hand;SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);}
     protected override void OnPaint(PaintEventArgs e){
