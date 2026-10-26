@@ -6,7 +6,7 @@
 
 [下载运行版](https://github.com/jiyan1989/codex-quota-manager/releases/latest) · [功能与操作](#功能与操作) · [已知问题与待验证项](docs/known-issues.md) · [使用限制](#限制)
 
-当前发布版本为 **v1.4.0**。
+当前发布版本为 **v1.4.1**。
 
 ## 软件界面
 

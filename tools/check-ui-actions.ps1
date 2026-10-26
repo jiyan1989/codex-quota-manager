@@ -38,7 +38,8 @@ class ActionCheck {
  Assert(cards.Single(c=>(string)c.Tag=="both").Checked,"legacy settings default to both windows");
  cards.Single(c=>(string)c.Tag=="fiveHour").Checked=true;Assert(File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"fiveHour\""),"five-hour card persists selection");
  cards.Single(c=>(string)c.Tag=="weekly").Checked=true;Assert(cards.Count(c=>c.Checked)==1 && File.ReadAllText(Path.Combine(root,"settings.json")).Contains("\"quotaBasis\":\"weekly\""),"weekly card is exclusive and persists selection");cards.Single(c=>(string)c.Tag=="both").Checked=true;
- Assert(cards.All(c=>c.Description.Length>20),"all choices explain pause and recovery behavior");settings.Close();}
+ Assert(cards.All(c=>c.Description.Length>20),"all choices explain pause and recovery behavior");
+ foreach(float scale in new[]{1f,1.25f,1.2f}){if(scale!=1f)settings.Scale(new System.Drawing.SizeF(scale,scale));settings.PerformLayout();Application.DoEvents();foreach(var toggle in All(settings).OfType<ToggleSwitch>()){Control c=toggle;while(c.Parent!=null && c.Parent!=settings){Assert(c.Parent.ClientRectangle.Contains(c.Bounds),"setting switch remains inside each ancestor at layout scale "+scale);c=c.Parent;}}}settings.Close();}
  var wakeName=Program.WakeEventName(new[]{"--settings",Path.Combine(root,"settings.json")});
  using(var child=Process.Start(new ProcessStartInfo(Application.ExecutablePath,"--wake-event "+wakeName){UseShellExecute=false,CreateNoWindow=true})){child.WaitForExit();Assert(child.ExitCode==0,"second process signals existing window wake event");}
  Call(f,"ProcessWakeRequest");Assert(Get(f,"worker")!=null && !(bool)Get(f,"stopRequested"),"wake starts stopped background monitor");

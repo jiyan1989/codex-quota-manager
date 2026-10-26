@@ -243,18 +243,23 @@ class MonitorWindow : Form {
         loginStart.CheckedChanged+=delegate{if(!loading){try{SetStartup(loginStart.Checked);}catch(Exception e){AppendLog("自启动设置失败："+e.Message);}}};
         chats.SelectionChanged+=delegate{UpdateStatusPanel();};
     }
-    TableLayoutPanel SwitchRow(string text,CheckBox toggle){var row=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,BackColor=Color.White};row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,60));row.Controls.Add(new Label{Text=text,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,ForeColor=Theme.Ink},0,0);toggle.Text=text;toggle.AccessibleName=text;toggle.Anchor=AnchorStyles.Right;toggle.Margin=new Padding(0,5,0,0);row.Controls.Add(toggle,1,0);return row;}
+    TableLayoutPanel SwitchRow(string text,CheckBox toggle){var row=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty,BackColor=Color.White};row.RowStyles.Add(new RowStyle(SizeType.Percent,100));row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,60));row.Controls.Add(new Label{Text=text,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,ForeColor=Theme.Ink},0,0);toggle.Text=text;toggle.AccessibleName=text;toggle.Anchor=AnchorStyles.Right;toggle.Margin=Padding.Empty;row.Controls.Add(toggle,1,0);return row;}
     static string BasisLabel(string basis){return basis=="fiveHour"?"仅五小时额度":basis=="weekly"?"仅周额度":"五小时和周额度";}
     void SelectQuotaBasis(string basis) {
         if(basis!="both" && basis!="fiveHour" && basis!="weekly")throw new ArgumentException("无效的额度判断依据");
         config.quotaBasis=basis;SaveAndApply();
     }
     TableLayoutPanel GeneralSwitch(string title,string detail,CheckBox toggle) {
-        var row=Rows(34,22);row.Controls.Add(SwitchRow(title,toggle),0,0);row.Controls.Add(new Label{Text=detail,Dock=DockStyle.Fill,ForeColor=Theme.Muted,Font=new Font(Font.FontFamily,9)},0,1);return row;
+        var row=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=2,Margin=Padding.Empty,Padding=new Padding(6,4,6,4),BackColor=Color.White};
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,64));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent,50));row.RowStyles.Add(new RowStyle(SizeType.Percent,50));
+        row.Controls.Add(new Label{Text=title,Dock=DockStyle.Fill,Margin=Padding.Empty,TextAlign=ContentAlignment.MiddleLeft,ForeColor=Theme.Ink},0,0);
+        row.Controls.Add(new Label{Text=detail,Dock=DockStyle.Fill,Margin=Padding.Empty,ForeColor=Theme.Muted,TextAlign=ContentAlignment.TopLeft,Font=new Font(Font.FontFamily,9)},0,1);
+        toggle.Text=title;toggle.AccessibleName=title;toggle.Anchor=AnchorStyles.Right;toggle.Margin=Padding.Empty;row.Controls.Add(toggle,1,0);row.SetRowSpan(toggle,2);return row;
     }
     Form CreateSettingsDialog(){
-        var dialog=new Form{Text="设置",ClientSize=new Size(740,640),FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,StartPosition=FormStartPosition.CenterParent,Font=Font,BackColor=Color.FromArgb(245,248,253)};
-        var rows=Rows(40,26,124,64,33,56,56,44,48);rows.Padding=new Padding(24,18,24,18);rows.BackColor=dialog.BackColor;
+        var dialog=new Form{Text="设置",ClientSize=new Size(740,676),AutoScaleMode=AutoScaleMode.Dpi,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,StartPosition=FormStartPosition.CenterParent,Font=Font,BackColor=Color.FromArgb(245,248,253)};
+        var rows=Rows(40,26,124,64,33,70,70,52,48);rows.Padding=new Padding(24,18,24,18);rows.BackColor=dialog.BackColor;
         rows.Controls.Add(Heading("设置",23),0,0);rows.Controls.Add(Heading("额度判断依据",12),0,1);
         var choices=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,BackColor=dialog.BackColor};
         for(int i=0;i<3;i++)choices.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100f/3));
@@ -270,7 +275,7 @@ class MonitorWindow : Form {
         rows.Controls.Add(Heading("通用设置",12),0,4);
         var startup=new ToggleSwitch{Checked=File.Exists(StartupShortcut())};rows.Controls.Add(GeneralSwitch("随 Windows 启动","登录后自动启动并开始监控",startup),0,5);
         var background=new ToggleSwitch{Checked=config.trayBackgroundEnabled};rows.Controls.Add(GeneralSwitch("托盘后台运行","最小化或关闭窗口后驻留托盘；关闭此项后，关窗退出。",background),0,6);
-        var resetOptions=new FlowLayoutPanel{Dock=DockStyle.Fill};var resetInput=new NumericUpDown{Minimum=0,Maximum=99,DecimalPlaces=1,Value=(decimal)config.resetWeeklyRemainingPercent,Width=58};resetOptions.Controls.Add(Inline("重置卡触发：周剩余 ≤"));resetOptions.Controls.Add(resetInput);resetOptions.Controls.Add(Inline("%（仅在主界面开关开启时）"));rows.Controls.Add(resetOptions,0,7);
+        var resetOptions=new FlowLayoutPanel{Dock=DockStyle.Fill,Margin=Padding.Empty,Padding=new Padding(0,8,0,0),WrapContents=false};var resetInput=new NumericUpDown{Minimum=0,Maximum=99,DecimalPlaces=1,Value=(decimal)config.resetWeeklyRemainingPercent,Width=58};resetOptions.Controls.Add(Inline("重置卡触发：周剩余 ≤"));resetOptions.Controls.Add(resetInput);resetOptions.Controls.Add(Inline("%（仅在主界面开关开启时）"));rows.Controls.Add(resetOptions,0,7);
         var buttons=new FlowLayoutPanel{Dock=DockStyle.Fill};buttons.Controls.Add(MakeButton("查看完整日志",delegate{OpenLogs();}));buttons.Controls.Add(MakeButton("关闭",delegate{dialog.Close();}));rows.Controls.Add(buttons,0,8);
         startup.CheckedChanged+=delegate{loginStart.Checked=startup.Checked;};background.CheckedChanged+=delegate{config.trayBackgroundEnabled=background.Checked;WriteSettings();};resetInput.ValueChanged+=delegate{resetThreshold.Value=resetInput.Value;SaveAndApply();};dialog.Controls.Add(rows);return dialog;
     }
