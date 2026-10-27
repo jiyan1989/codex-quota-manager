@@ -5,5 +5,7 @@ foreach($name in @('check.ps1','check-features.ps1','check-projects.ps1','check-
     & (Join-Path $PSHOME 'pwsh.exe') -NoProfile -File (Join-Path $PSScriptRoot ('monitor\'+$name))
     if($LASTEXITCODE -ne 0){throw "Check failed: $name"}
 }
+& (Join-Path $PSHOME 'pwsh.exe') -NoProfile -File (Join-Path $PSScriptRoot 'tools\check-resource-limits.ps1')
+if($LASTEXITCODE -ne 0){throw 'Resource limits check failed.'}
 Write-Host 'All checks passed. No real chats or reset cards were controlled.'
 

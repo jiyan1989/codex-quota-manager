@@ -1,4 +1,4 @@
-#requires -Version 7.0
+﻿#requires -Version 7.0
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'quota-monitor.ps1') -Library -All -Mode Auto -RecoveryConfirmSeconds 1
 $script:ActualWaitPoll=${function:Wait-Poll}
@@ -98,14 +98,16 @@ function Get-DesktopCatalog {return @{total=0;ids=@();chats=@()}}
 function Get-DesktopOwners {return @{}}
 function Get-DesktopSnapshots {return @{}}
 function Wait-Poll($seconds){
-    if($seconds -ne 180){throw 'Read retries must use configured normal interval'}
+    if($script:ReadPlan[$script:ReadStep-1] -eq 'fail'){$script:ExpectedRetryFailures++}else{$script:ExpectedRetryFailures=0}
+    $expectedDelay=if($script:ExpectedRetryFailures -gt 0){[int][Math]::Min(300,180*[Math]::Pow(2,[Math]::Min(4,$script:ExpectedRetryFailures-1)))}else{180}
+    if($seconds -ne $expectedDelay){throw "Expected retry delay $expectedDelay, received $seconds"}
     return $script:ReadStep -lt $script:ReadPlan.Count
 }
 function Check-ReadRetry($limit,$plan,$expectedSteps,$expectedFailures,$expectedPhase) {
     $script:RunDirectory=Join-Path $script:TestRoot ([guid]::NewGuid().ToString());[void][IO.Directory]::CreateDirectory($script:RunDirectory)
     $script:SettingsPath=Join-Path $script:RunDirectory 'settings.json'
     Write-JsonAtomic $script:SettingsPath @{pollSeconds=180;pauseRemainingPercent=5;maxConsecutiveFailures=$limit}
-    $script:ReadPlan=$plan;$script:ReadStep=0
+    $script:ReadPlan=$plan;$script:ReadStep=0;$script:ExpectedRetryFailures=0
     Start-AllMonitor
     $result=Read-Json (Join-Path $script:RunDirectory 'state.json')
     if($script:ReadStep -ne $expectedSteps -or $result.readFailureCount -ne $expectedFailures -or $result.phase -ne $expectedPhase){throw "Incorrect fleet retry handling for failure limit $limit"}

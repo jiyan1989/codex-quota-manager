@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
@@ -121,7 +121,7 @@ class LogWindow : Form {
                         foreach(var entry in Obj(Get(data,"threads"))) titles[entry.Key]=Str(Get(Obj(entry.Value),"displayTitle"));
                     }
                 }
-                foreach(string path in Directory.GetFiles(directory,"events.jsonl",SearchOption.AllDirectories)) {
+                foreach(string path in Directory.GetFiles(directory,"events.jsonl*",SearchOption.AllDirectories).Where(p=>Path.GetFileName(p)=="events.jsonl" || Regex.IsMatch(Path.GetFileName(p),@"^events\.jsonl\.[1-3]$"))) {
                     using(var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete))
                     using(var reader=new StreamReader(stream,Encoding.UTF8)) {
                         string line;
@@ -142,12 +142,13 @@ class LogWindow : Form {
                                 object five=Get(quota,"remaining") ?? Get(details,"remaining"),week=Get(quota,"weeklyRemaining") ?? Get(details,"weeklyRemaining");
                                 string quotaWhen=Str(Get(data,"quotaCheckedAt")); DateTime quotaTime;
                                 if(DateTime.TryParse(quotaWhen,out quotaTime)) quotaWhen=quotaTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+                                if(parsed.Count>=12000)parsed=parsed.OrderByDescending(r=>r.Time).Take(10000).ToList();
                                 parsed.Add(new LogRecord {Time=time.ToLocalTime(),Type=type,Category=category,Chat=chat,Five=Percentage(five),Week=Percentage(week),Message=message.Length>0 ? message : type+"（旧日志未记录详细说明）",QuotaTime=quotaWhen});
                             } catch(ArgumentException){bad++;} catch(InvalidOperationException){bad++;} catch(FormatException){bad++;}
                         }
                     }
                 }
-                return parsed.OrderByDescending(r=>r.Time).ToList();
+                return parsed.OrderByDescending(r=>r.Time).Take(10000).ToList();
             });
             if(IsDisposed) return;
             records=result; invalidLines=bad; Ready=true; Filter();
@@ -165,7 +166,7 @@ class LogWindow : Form {
             string tooltip=record.QuotaTime.Length==0 ? "旧日志未记录额度更新时间" : "额度对应的查询时间："+record.QuotaTime;
             table.Rows[i].Cells[3].ToolTipText=tooltip; table.Rows[i].Cells[4].ToolTipText=tooltip;
         }
-        summary.Text="匹配 "+filtered.Count+" 条，显示最近 "+table.Rows.Count+" 条 · 暂停/继续以客户端确认事件为准 · 旧字段缺失显示“未记录”"+(invalidLines>0 ? " · 跳过 "+invalidLines+" 条不完整记录" : "");
+        summary.Text="保留最近 10000 条 · 匹配 "+filtered.Count+" 条，显示最近 "+table.Rows.Count+" 条 · 暂停/继续以客户端确认事件为准 · 旧字段缺失显示“未记录”"+(invalidLines>0 ? " · 跳过 "+invalidLines+" 条不完整记录" : "");
     }
     static string Csv(string value) {return "\""+(value??"").Replace("\"","\"\"")+"\"";}
     void Export() {

@@ -326,7 +326,20 @@ function Write-Event($Name, $Details = @{}) {
         $entry.quotaCheckedAt=$script:Journal.lastCheckedAt
         $entry.resetCredits=$q.resetCredits
     }
-    [IO.File]::AppendAllText((Join-Path $script:RunDirectory 'events.jsonl'), ($entry | ConvertTo-Json -Compress -Depth 10) + "`n", $script:Utf8)
+    # Bound each journal to one active file and three archives (about 16 MiB).
+    # Only the active, exclusively locked controller writes its journal.
+    $eventPath=Join-Path $script:RunDirectory 'events.jsonl'
+    if((Test-Path -LiteralPath $eventPath) -and (Get-Item -LiteralPath $eventPath).Length -ge 4MB){
+        try {
+            for($archive=3;$archive -ge 1;$archive--){
+                $target="$eventPath.$archive"
+                if($archive -eq 3 -and (Test-Path -LiteralPath $target)){[IO.File]::Delete($target)}
+                $source=$(if($archive -eq 1){$eventPath}else{"$eventPath.$($archive-1)"})
+                if(Test-Path -LiteralPath $source){[IO.File]::Move($source,$target)}
+            }
+        } catch [IO.IOException] { } # A viewer may temporarily hold a file; retry at the next event.
+    }
+    [IO.File]::AppendAllText($eventPath, ($entry | ConvertTo-Json -Compress -Depth 10) + "`n", $script:Utf8)
     # Routine progress stays in the journal; the console shows one summary per cycle.
     if($Name -in @('checking-quota','discovering-chats','checking-owners','checking-task-state','waiting','recovery-first-check')){return}
     if($All -and $Name -eq 'monitor'){return}
@@ -1005,12 +1018,12 @@ function Start-AllMonitor {
         } catch {
             $script:RunDirectory=$rootDirectory;$script:Journal=$fleet;$script:ThreadId='all';$script:OwnerId=$null
             $failures++;Write-Event 'all-read-error' @{error=$_.Exception.Message;failures=$failures}
-            $fleet.readFailureCount=$failures;$fleet.lastReadErrorAt=[DateTimeOffset]::UtcNow.ToString('o');$fleet.nextPollSeconds=$PollSeconds
+            $fleet.readFailureCount=$failures;$fleet.lastReadErrorAt=[DateTimeOffset]::UtcNow.ToString('o');$fleet.nextPollSeconds=[int][Math]::Min([Math]::Max(300,$PollSeconds),$PollSeconds*[Math]::Pow(2,[Math]::Min(4,$failures-1)))
             Close-Ipc;Stop-QuotaServer
             foreach($record in $fleet.threads.Values){$record.recoverySeenAt=$null}
             Save-Journal
             if($_.Exception.Message -match 'identity mismatch|Unsupported|Invalid simulated|Real quota is insufficient|requires explicit' -or (Test-FailureLimitReached $failures)){Set-Phase 'needs_attention' @{reason=$_.Exception.Message};break}
-            $delay=$PollSeconds
+            $delay=$fleet.nextPollSeconds
         }
         if(!(Wait-Poll $delay)){break}
     }

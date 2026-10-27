@@ -32,6 +32,7 @@ public class MonitorSettings {
     public int maxConsecutiveFailures = 0;
     public bool showAllProjects = false;
     public string stateDirectory;
+    public string pwshPath;
 }
 
 static class Program {
@@ -95,6 +96,19 @@ partial class MonitorWindow : Form {
     readonly Label connectionState=new Label(), monitorState=new Label(), quotaFreshState=new Label(), taskState=new Label();
     readonly Label selectedTask=new Label();
     string settingsSeen="";
+    string runtimeFailure;
+    string cachedRuntime;
+    DateTime stateStamp=DateTime.MinValue, settingsStamp=DateTime.MinValue;
+    long stateLength=-1, settingsLength=-1;
+    bool logDirty;
+    int restartFailures;
+    long stateRevision;
+    DateTime lastStateRead=DateTime.MinValue,lastSettingsRead=DateTime.MinValue;
+    DateTime nextHiddenRefresh=DateTime.MinValue;
+    readonly object outputLock=new object();
+    readonly Queue<string> pendingOutput=new Queue<string>();
+    readonly Queue<string> logLines=new Queue<string>();
+    readonly Dictionary<string,DateTime> recentActions=new Dictionary<string,DateTime>();
     readonly EventWaitHandle wakeEvent;
     bool wakePending;
     string captureDir;
@@ -163,8 +177,8 @@ partial class MonitorWindow : Form {
             else if(config.trayBackgroundEnabled) { Hide(); } else RequestExit();
         };
         Shown+=delegate { if(!args.Contains("--no-start"))StartWorker();else stopRequested=true; if(args.Contains("--tray")) Hide(); };
-        timer.Interval=1000; timer.Tick+=delegate { UpdateScreen(); ProcessWakeRequest(); KeepProtectionRunning(); if(captureDir!=null && lastState!=null && Get(lastState,"lastQuota")!=null) { try {Directory.CreateDirectory(captureDir);using(var image=new Bitmap(Width,Height)){DrawToBitmap(image,new Rectangle(Point.Empty,Size));image.Save(Path.Combine(captureDir,"live-window.png"));}captureDir=null;}catch(Exception e){AppendLog("预览保存失败："+e.Message);} } }; timer.Start();
-        FormClosed+=delegate { timer.Dispose(); wakeEvent.Dispose();tray.Visible=false; tray.Dispose(); if(worker!=null) worker.Dispose(); };
+        timer.Interval=1000; timer.Tick+=delegate { FlushOutput(); if(Visible || smokeTest || exiting || DateTime.UtcNow>=nextHiddenRefresh){UpdateScreen();nextHiddenRefresh=DateTime.UtcNow.AddSeconds(5);} ProcessWakeRequest(); KeepProtectionRunning(); if(captureDir!=null && lastState!=null && Get(lastState,"lastQuota")!=null) { try {Directory.CreateDirectory(captureDir);using(var image=new Bitmap(Width,Height)){DrawToBitmap(image,new Rectangle(Point.Empty,Size));image.Save(Path.Combine(captureDir,"live-window.png"));}captureDir=null;}catch(Exception e){AppendLog("预览保存失败："+e.Message);} } }; timer.Start();
+        FormClosed+=delegate { timer.Dispose(); wakeEvent.Dispose();tray.Visible=false; tray.Dispose(); DisposeWorker(); };
     }
     static string Argument(string[] args,string key) { int i=Array.IndexOf(args,key); return i>=0 && i+1<args.Length ? args[i+1] : null; }
     static Dictionary<string,object> Obj(object value) { return value as Dictionary<string,object> ?? new Dictionary<string,object>(); }
@@ -204,7 +218,7 @@ partial class MonitorWindow : Form {
         protectionStatus.Text="● 额度保护";protectionStatus.Dock=DockStyle.Fill;protectionStatus.TextAlign=ContentAlignment.MiddleRight;protectionStatus.ForeColor=Theme.Muted;titleRow.Controls.Add(protectionStatus,1,0);left.Controls.Add(titleRow,0,0);
         left.Controls.Add(new Label{Text="搜索原任务并勾选托管，支持按工作目录查找",Dock=DockStyle.Fill,ForeColor=Theme.Muted},0,1);
         var searchRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,2,0,6),BackColor=Color.White};searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,44));search.Dock=DockStyle.Fill;search.Font=new Font("Microsoft YaHei UI",11);search.Margin=new Padding(0,4,9,0);search.AccessibleName="搜索任务或工作目录";search.TextChanged+=delegate{RenderChats(true);};searchRow.Controls.Add(search,0,0);
-        refresh.Text="↻";refresh.Dock=DockStyle.Fill;refresh.FlatStyle=FlatStyle.Flat;refresh.FlatAppearance.BorderColor=Theme.Border;refresh.Click+=delegate{if(WorkerRunning())Signal("Refresh");else StartWorker();};searchRow.Controls.Add(refresh,1,0);left.Controls.Add(searchRow,0,2);
+        refresh.Text="↻";refresh.Dock=DockStyle.Fill;refresh.FlatStyle=FlatStyle.Flat;refresh.FlatAppearance.BorderColor=Theme.Border;refresh.Click+=delegate{if(WorkerRunning())Signal("Refresh");else StartWorker(true);};searchRow.Controls.Add(refresh,1,0);left.Controls.Add(searchRow,0,2);
         var filters=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,BackColor=Color.White};showAll.Text="显示全部任务";showAll.AutoSize=true;showAll.Margin=new Padding(0,5,14,0);showAll.CheckedChanged+=delegate{if(!loading){WriteSettings();RenderChats(true);}};filters.Controls.Add(showAll);listTitle.AutoSize=true;listTitle.ForeColor=Theme.Muted;listTitle.Margin=new Padding(0,6,0,0);filters.Controls.Add(listTitle);left.Controls.Add(filters,0,3);
         chats.Dock=DockStyle.Fill; chats.BackgroundColor=Color.White; chats.BorderStyle=BorderStyle.None; chats.AllowUserToAddRows=false; chats.AllowUserToDeleteRows=false;
         chats.RowHeadersVisible=false; chats.AutoSizeRowsMode=DataGridViewAutoSizeRowsMode.None; chats.RowTemplate.Height=34;
@@ -329,10 +343,27 @@ partial class MonitorWindow : Form {
         config.resumeThreadIds=ids.ToArray();config.resumeExcludedThreadIds=excluded.ToArray();loading=false;SaveAndApply();
     }
     string FindRuntime() {
-        string bundled=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".cache","codex-runtimes","codex-primary-runtime","dependencies","native","powershell","pwsh.exe");
-        if(File.Exists(bundled)) return bundled;
-        foreach(string folder in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) { try { string path=Path.Combine(folder,"pwsh.exe"); if(File.Exists(path)) return path; } catch(ArgumentException){} }
-        throw new Exception("没有找到 PowerShell 7，请保留 Codex 自带的运行环境。");
+        if(cachedRuntime!=null && File.Exists(cachedRuntime))return cachedRuntime;
+        var candidates=new List<string>();
+        if(!String.IsNullOrWhiteSpace(config.pwshPath))candidates.Add(Environment.ExpandEnvironmentVariables(config.pwshPath.Trim().Trim('"')));
+        candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".cache","codex-runtimes","codex-primary-runtime","dependencies","native","powershell","pwsh.exe"));
+        candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"PowerShell","7","pwsh.exe"));
+        foreach(string folder in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) {
+            if(!String.IsNullOrWhiteSpace(folder))try{candidates.Add(Path.Combine(folder.Trim().Trim('"'),"pwsh.exe"));}catch(ArgumentException){}
+        }
+        foreach(string candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase)) {
+            if(!File.Exists(candidate))continue;
+            try {
+                var info=System.Diagnostics.FileVersionInfo.GetVersionInfo(candidate);
+                if(info.FileMajorPart>=7){cachedRuntime=candidate;return candidate;}
+            }catch(System.ComponentModel.Win32Exception){}
+        }
+        throw new Exception("缺少 PowerShell 7 运行组件，请安装 PowerShell 7 后重新打开任务管家。");
+    }
+    void DisposeWorker() {
+        if(worker==null)return;
+        worker.OutputDataReceived-=WorkerOutput;worker.ErrorDataReceived-=WorkerOutput;
+        worker.Dispose();worker=null;
     }
     static string Quote(string value) { if(value.Contains("\"")) throw new ArgumentException("路径含不支持的引号"); return "\""+value+"\""; }
     bool WorkerRunning() { return worker!=null && !worker.HasExited; }
@@ -340,18 +371,20 @@ partial class MonitorWindow : Form {
         if(wakeEvent.WaitOne(0))wakePending=true;
         if(!wakePending || exiting || stopRequested && WorkerRunning())return;
         wakePending=false;
-        if(WorkerRunning())Signal("Refresh");else StartWorker();
+        if(WorkerRunning())Signal("Refresh");else StartWorker(true);
     }
     void KeepProtectionRunning() {
         if(exiting || stopRequested || smokeTest || WorkerRunning() || DateTime.UtcNow<nextProtectionRestart)return;
         StartWorker();
     }
-    void StartWorker() {
+    void StartWorker(bool manual=false) {
+        if(manual){restartFailures=0;nextProtectionRestart=DateTime.MinValue;}
         if(WorkerRunning() || exiting) return;
-        nextProtectionRestart=DateTime.UtcNow.AddSeconds(30);
+        if(!manual && lastState!=null && Str(Get(lastState,"phase"))=="needs_attention"){runtimeFailure="任务保护已停止，请在设置中查看原因后手动重试。";return;}
+        nextProtectionRestart=DateTime.UtcNow.AddSeconds(Math.Min(300,30*Math.Pow(2,Math.Min(4,restartFailures++))));
         try {
             WriteSettings(); stopRequested=false;
-            if(worker!=null) worker.Dispose();
+            DisposeWorker();
             worker=new Process();
             worker.StartInfo=new ProcessStartInfo(FindRuntime(),"-NoLogo -NoProfile -File "+Quote(backendPath)+" -All -Mode "+(smokeTest ? "Monitor" : "Auto")+" -StateDirectory "+Quote(stateDir)+" -SettingsPath "+Quote(settingsPath));
             worker.StartInfo.UseShellExecute=false; worker.StartInfo.CreateNoWindow=true;
@@ -359,20 +392,22 @@ partial class MonitorWindow : Form {
             worker.StartInfo.StandardOutputEncoding=Encoding.UTF8; worker.StartInfo.StandardErrorEncoding=Encoding.UTF8;
             worker.OutputDataReceived+=WorkerOutput; worker.ErrorDataReceived+=WorkerOutput;
             worker.Start(); worker.BeginOutputReadLine(); worker.BeginErrorReadLine();
-            startedAt=DateTime.Now; mode.Text="正在查询额度…";
+            startedAt=DateTime.Now; runtimeFailure=null; mode.Text="正在查询额度…";
             AppendLog("后台监控已启动，不会打开终端窗口。");
-        } catch(Exception e) { worker=null; AppendLog("启动失败："+e.Message); mode.Text="额度保护连接失败，等待自动重连"; }
+        } catch(Exception e) { if(worker!=null)try{if(!worker.HasExited)worker.Kill();}catch(InvalidOperationException){} DisposeWorker(); runtimeFailure=e.Message; AppendLog("启动失败："+e.Message); mode.Text="额度保护连接失败，等待自动重连"; }
     }
     void WorkerOutput(object sender,DataReceivedEventArgs e) {
-        if(String.IsNullOrWhiteSpace(e.Data) || IsDisposed || !IsHandleCreated) return;
-        try { BeginInvoke(new Action(delegate { AppendLog(e.Data); })); } catch(InvalidOperationException){}
+        if(String.IsNullOrWhiteSpace(e.Data) || IsDisposed)return;
+        lock(outputLock){pendingOutput.Enqueue(e.Data.Length>4096 ? e.Data.Substring(0,4096) : e.Data);while(pendingOutput.Count>120)pendingOutput.Dequeue();}
     }
-    void AppendLog(string message) {
-        if(IsDisposed) return;
-        string[] lines=(log.Text+message+Environment.NewLine).Split(new[]{Environment.NewLine},StringSplitOptions.RemoveEmptyEntries);
-        log.Text=String.Join(Environment.NewLine,lines.Skip(Math.Max(0,lines.Length-60)))+Environment.NewLine;
-        log.SelectionStart=log.TextLength; log.ScrollToCaret();
+    void FlushOutput() {
+        lock(outputLock){while(pendingOutput.Count>0)AddLogLine(pendingOutput.Dequeue());}
+        if(!logDirty)return;logDirty=false;
+        string text=String.Join(Environment.NewLine,logLines.ToArray());
+        if(log.Text!=text){log.Text=text;log.SelectionStart=log.TextLength;log.ScrollToCaret();}
     }
+    void AddLogLine(string message){logDirty=true;logLines.Enqueue(message.Length>4096 ? message.Substring(0,4096) : message);while(logLines.Count>60)logLines.Dequeue();}
+    void AppendLog(string message) {if(!IsDisposed){AddLogLine(message);FlushOutput();}}
     void Signal(string action) {
         if(!WorkerRunning()) return;
         if(stopRequested && action!="Stop") return;
@@ -387,6 +422,9 @@ partial class MonitorWindow : Form {
         if(observe.Checked){ShowActionFeedback("只读观察模式不操作任务，请先关闭只读观察。");return;}
         if(stopRequested && WorkerRunning()){ShowActionFeedback("后台正在停止，请等待退出后再继续任务。");return;}
         string id=Str(chats.CurrentRow.Tag),title=Str(chats.CurrentRow.Cells[1].Value);
+        string actionKey=id+"|"+action;DateTime submitted;
+        if(recentActions.TryGetValue(actionKey,out submitted) && DateTime.UtcNow-submitted<TimeSpan.FromSeconds(3)){ShowActionFeedback("操作已登记，请稍候。");return;}
+        restartFailures=0;nextProtectionRestart=DateTime.MinValue;
         try {
             if(action=="AutoContinue" || action=="CancelAuto"){
                 // Update selection without recursively submitting another project command.
@@ -401,7 +439,10 @@ partial class MonitorWindow : Form {
             }
             string directory=Path.Combine(stateDir,"commands");Directory.CreateDirectory(directory);
             AtomicJson(Path.Combine(directory,DateTime.UtcNow.Ticks.ToString("D20")+"-"+Guid.NewGuid().ToString()+".json"),new {id=Guid.NewGuid().ToString(),threadId=id,title=title,action=action,time=DateTime.UtcNow.ToString("o")});
-            if(!WorkerRunning())StartWorker();else Signal("Refresh");
+            foreach(string key in recentActions.Keys.Where(x=>x.StartsWith(id+"|",StringComparison.Ordinal)).ToArray())recentActions.Remove(key);
+            recentActions[actionKey]=DateTime.UtcNow;
+            if(recentActions.Count>100)foreach(string key in recentActions.Where(x=>DateTime.UtcNow-x.Value>TimeSpan.FromMinutes(1)).Select(x=>x.Key).ToArray())recentActions.Remove(key);
+            if(!WorkerRunning())StartWorker(true);else Signal("Refresh");
             if((action=="Start" || action=="AutoContinue") && Str(chats.CurrentRow.Cells[2].Value)=="未加载"){
                 try {Process.Start(new ProcessStartInfo("codex://threads/"+id){UseShellExecute=true});AppendLog("正在 Codex 客户端打开未加载项目「"+title+"」，加载后执行已登记操作。");}
                 catch(Exception e){AppendLog("操作已登记，请在 Codex 客户端打开项目「"+title+"」；自动打开失败："+e.Message);}
@@ -419,7 +460,7 @@ partial class MonitorWindow : Form {
         if(!WorkerRunning()) FinishExit(); else mode.Text="正在关闭后台监控…";
     }
     void FinishExit() { allowClose=true; Close(); }
-    void RestoreWindow() { Show(); WindowState=FormWindowState.Normal; Activate(); }
+    void RestoreWindow() { Show(); WindowState=FormWindowState.Normal; UpdateScreen(); Activate(); }
     void OpenLogs() {
         if(viewer==null || viewer.IsDisposed) { viewer=new LogWindow(logDir); viewer.Show(this); }
         else { viewer.Show(); viewer.Activate(); }
@@ -436,16 +477,25 @@ partial class MonitorWindow : Form {
     }
     void RenderChats(bool force) {
         if(lastState==null) return;
+        string revision=stateRevision+"|"+resumeAll.Checked+"|"+showAll.Checked+"|"+search.Text+"|"+String.Join(",",config.resumeThreadIds)+"|"+String.Join(",",config.resumeExcludedThreadIds);
+        if(!force && revision==lastRendered)return;
         var data=Items(Get(lastState,"chats")).Select(Obj).Where(x=>showAll.Checked || search.Text.Length>0 || IsRelevantChat(x) || config.resumeThreadIds.Contains(Str(Get(x,"id")))).Where(x=>search.Text.Length==0 || (Str(Get(x,"title"))+" "+Str(Get(x,"workspace"))).IndexOf(search.Text,StringComparison.OrdinalIgnoreCase)>=0).OrderByDescending(x=>config.resumeThreadIds.Contains(Str(Get(x,"id")))).ToList();
-        string revision=lastChecked+"|"+resumeAll.Checked+"|"+showAll.Checked+"|"+json.Serialize(data);
-        if(!force && revision==lastRendered) return;
         string selected=chats.CurrentRow==null ? "" : Str(chats.CurrentRow.Tag);
         int scroll=chats.FirstDisplayedScrollingRowIndex;
-        loading=true; chats.Rows.Clear(); var ids=new HashSet<string>(config.resumeThreadIds);var excluded=new HashSet<string>(config.resumeExcludedThreadIds);
+        loading=true; var ids=new HashSet<string>(config.resumeThreadIds);var excluded=new HashSet<string>(config.resumeExcludedThreadIds);
+        var wantedIds=new HashSet<string>(data.Select(x=>Str(Get(x,"id"))));
+        for(int row=chats.Rows.Count-1;row>=0;row--)if(!wantedIds.Contains(Str(chats.Rows[row].Tag)))chats.Rows.RemoveAt(row);
+        var rows=chats.Rows.Cast<DataGridViewRow>().ToDictionary(x=>Str(x.Tag));
+        int desiredIndex=0;
         foreach(var chat in data) {
             string id=Str(Get(chat,"id")), why=Str(Get(chat,"waitReason"));
             string runtime=Str(Get(chat,"runtime"));if(runtime=="执行中" && Str(Get(chat,"goalStatus"))=="active")runtime="目标执行";
-            int index=chats.Rows.Add(resumeAll.Checked ? !excluded.Contains(id) : ids.Contains(id),Str(Get(chat,"title")),runtime,!ids.Contains(id) && !resumeAll.Checked ? "未托管" : why.Length>0 ? why : Phase(Str(Get(chat,"monitorPhase"))));
+            DataGridViewRow row;
+            if(!rows.TryGetValue(id,out row)){int added=chats.Rows.Add();row=chats.Rows[added];row.Tag=id;}
+            if(row.Index!=desiredIndex){chats.Rows.Remove(row);chats.Rows.Insert(desiredIndex,row);}
+            desiredIndex++;int index=row.Index;
+            object[] values={resumeAll.Checked ? !excluded.Contains(id) : ids.Contains(id),Str(Get(chat,"title")),runtime,!ids.Contains(id) && !resumeAll.Checked ? "未托管" : why.Length>0 ? why : Phase(Str(Get(chat,"monitorPhase")))};
+            for(int cell=0;cell<values.Length;cell++)if(!Object.Equals(row.Cells[cell].Value,values[cell]))row.Cells[cell].Value=values[cell];
             chats.Rows[index].Tag=id; chats.Rows[index].Cells[1].ToolTipText=Str(Get(chat,"title"))+"\n"+Str(Get(chat,"workspace"));
             chats.Rows[index].Cells[3].ToolTipText=why;
             chats.Rows[index].Cells[2].Style.ForeColor=runtime.Contains("执行") ? Color.FromArgb(16,114,107) : Color.FromArgb(109,118,137);
@@ -462,7 +512,8 @@ partial class MonitorWindow : Form {
     void UpdateScreen() {
         RefreshUpdateResult();policySummary.Text=PolicySummary();
         try {
-            if(File.Exists(settingsPath)) {
+            var settingsInfo=new FileInfo(settingsPath);
+            if(settingsInfo.Exists && (settingsInfo.LastWriteTimeUtc!=settingsStamp || settingsInfo.Length!=settingsLength || DateTime.UtcNow-lastSettingsRead>TimeSpan.FromSeconds(30))) {
                 string currentSettings=ReadShared(settingsPath);
                 if(settingsSeen!=currentSettings) {
                     var next=json.Deserialize<MonitorSettings>(currentSettings);
@@ -473,13 +524,21 @@ partial class MonitorWindow : Form {
                         resumeAll.Checked=config.resumeAll;observe.Checked=config.observeOnly;showAll.Checked=config.showAllProjects;
                         poll.Value=config.pollSeconds;threshold.Value=(decimal)config.pauseRemainingPercent;weeklyFloor.Value=(decimal)config.weeklyPauseRemainingPercent;
                         nearThreshold.Value=(decimal)config.nearLimitRemainingPercent;nearPoll.Value=config.nearLimitPollSeconds;resumeThreshold.Value=(decimal)config.resumeRemainingPercent;autoResume.Checked=config.autoResumeEnabled;
-                        autoReset.Checked=config.autoResetEnabled;loading=false;settingsSeen=currentSettings;lastRendered="";
+                        autoReset.Checked=config.autoResetEnabled;loading=false;settingsSeen=currentSettings;lastRendered="";cachedRuntime=null;
                     }
                 }
+                lastSettingsRead=DateTime.UtcNow;settingsStamp=settingsInfo.LastWriteTimeUtc;settingsLength=settingsInfo.Length;
             }
+
             string path=Path.Combine(stateDir,"state.json");
-            if(File.Exists(path)) {
-                var data=Obj(json.DeserializeObject(ReadShared(path)));
+            var stateInfo=new FileInfo(path);
+            if(stateInfo.Exists && (lastState==null || stateInfo.LastWriteTimeUtc!=stateStamp || stateInfo.Length!=stateLength || DateTime.UtcNow-lastStateRead>TimeSpan.FromSeconds(30))) {
+                var fresh=Obj(json.DeserializeObject(ReadShared(path)));
+                lastState=fresh;lastStateRead=DateTime.UtcNow;stateRevision++;stateStamp=stateInfo.LastWriteTimeUtc;stateLength=stateInfo.Length;
+                if(Convert.ToInt32(Get(fresh,"readFailureCount"))==0)restartFailures=0;
+            }
+            if(lastState!=null) {
+                var data=lastState;
                 lastState=data; lastChecked=Str(Get(data,"lastCheckedAt"));
                 var quota=Obj(Get(data,"lastQuota"));
                 if(quota.Count>0) { five.PauseAt=config.pauseRemainingPercent;week.PauseAt=config.weeklyPauseRemainingPercent;five.UpdateQuota(Get(quota,"remaining"),Get(quota,"resetsAt")); week.UpdateQuota(Get(quota,"weeklyRemaining"),Get(quota,"weeklyResetsAt")); }
@@ -511,6 +570,8 @@ partial class MonitorWindow : Form {
         five.Tick(); week.Tick();UpdateStatusPanel();
         if(!WorkerRunning()) {
             mode.Text=stopRequested ? "额度保护未开启；刷新或继续任务可恢复" : "额度保护等待自动重连";
+            if(!stopRequested && lastState!=null && Str(Get(lastState,"phase"))=="needs_attention")runtimeFailure="任务保护已停止，请在设置中查看原因后重试。";
+            if(!stopRequested && runtimeFailure!=null){mode.Text="额度保护未启动";freshness.Text=runtimeFailure;freshness.ForeColor=Color.FromArgb(185,61,41);}
             if(exiting) {FinishExit(); return;}
         }
         if(smokeTest && !checkFinished) SmokeCheck();
