@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'CodexQuotaManager'
 SETTINGS = DATA / 'settings.json'
 STATE = DATA / 'state' / 'state.json'
-DEFAULTS = dict(quotaBasis='both', pollSeconds=30, pauseRemainingPercent=10, resumeRemainingPercent=20,
+DEFAULTS = dict(quotaBasis='layered', pollSeconds=30, pauseRemainingPercent=10, resumeRemainingPercent=20,
                 weeklyPauseRemainingPercent=10, autoResumeEnabled=True, observeOnly=False, resumeAll=False,
                 resumeThreadIds=[], resumeExcludedThreadIds=[], autoResetEnabled=False,
                 resetWeeklyRemainingPercent=1, nearLimitRemainingPercent=20,
@@ -63,7 +63,8 @@ def status():
                 automatic_control=not cfg.get('observeOnly', False),
                 checked_at=s.get('lastCheckedAt'), phase=s.get('phase'),
                 five_hour_remaining=quota.get('remaining'), weekly_remaining=quota.get('weeklyRemaining'),
-                quota_basis=cfg.get('quotaBasis','both'),
+                quota_basis=cfg.get('quotaBasis','layered'),
+                weekly_floor_remaining=cfg.get('weeklyPauseRemainingPercent',10),
                 pause_remaining=cfg.get('pauseRemainingPercent'), resume_remaining=cfg.get('resumeRemainingPercent'),
                 auto_resume_enabled=cfg.get('autoResumeEnabled',True),
                 managed_count=len(cfg.get('resumeThreadIds') or []), counts=s.get('counts'),
