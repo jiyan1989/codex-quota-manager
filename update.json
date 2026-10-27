@@ -1,12 +1,12 @@
 {
-  "tag_name": "v1.5.0",
+  "tag_name": "v1.5.1",
   "draft": false,
   "prerelease": false,
   "assets": [
     {
-      "name": "CodexQuotaManager-v1.5.0-windows-x64.zip",
-      "browser_download_url": "https://github.com/jiyan1989/codex-quota-manager/releases/download/v1.5.0/CodexQuotaManager-v1.5.0-windows-x64.zip",
-      "digest": "sha256:e8d73e26b1e54c05cda5a6fe435d7179140b48af3b1f06ea4e75f1b7d77a3487"
+      "name": "CodexQuotaManager-v1.5.1-windows-x64.zip",
+      "browser_download_url": "https://github.com/jiyan1989/codex-quota-manager/releases/download/v1.5.1/CodexQuotaManager-v1.5.1-windows-x64.zip",
+      "digest": "sha256:760e35dd63a338ff225a426679cbe6c31a86d2b215c2e9639e7eed29ba52591f"
     }
   ]
 }
