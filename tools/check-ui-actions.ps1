@@ -34,6 +34,7 @@ class ActionCheck {
  var grid=(DataGridView)Get(f,"chats");Set(f,"loading",true);int row=grid.Rows.Add(false,"Fixture task","目标已暂停","保持手动暂停");grid.Rows[row].Tag="00000000-0000-0000-0000-000000000001";grid.CurrentCell=grid.Rows[row].Cells[1];Set(f,"loading",false);
  Assert((bool)Get(f,"stopRequested"),"no-start window represents stopped monitoring");
  Assert(!All(f).Any(c=>c is ComboBox),"main screen has no quota basis dropdown");
+ Assert(!All(f).OfType<Button>().Any(c=>c.Text.Contains("监控")),"main screen has no start or stop monitoring buttons");
  using(var settings=(Form)f.GetType().GetMethod("CreateSettingsDialog",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(f,null)){
  settings.Show(f);Application.DoEvents();Assert(!All(settings).Any(c=>c is ChoiceCard),"old mutually exclusive quota modes are removed");
  var pauseInput=All(settings).OfType<NumericUpDown>().Single(c=>c.Name=="fiveHourPause");var resumeInput=All(settings).OfType<NumericUpDown>().Single(c=>c.Name=="fiveHourResume");var weekInput=All(settings).OfType<NumericUpDown>().Single(c=>c.Name=="weeklyFloor");Assert(pauseInput.Value==12 && resumeInput.Value==31 && weekInput.Value==44,"migration preserves all three original numeric settings");Assert(((MonitorSettings)Get(f,"config")).quotaBasis=="layered" && Directory.GetFiles(root,"settings.json.before-layered-*.bak").Length==1,"legacy mode migration creates a settings backup");

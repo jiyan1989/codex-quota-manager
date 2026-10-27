@@ -98,7 +98,9 @@ partial class MonitorWindow : Form {
     readonly EventWaitHandle wakeEvent;
     bool wakePending;
     string captureDir;
-    readonly Button start=new Button(), apply=new Button(), refresh=new Button();
+    readonly Button apply=new Button(), refresh=new Button();
+    readonly Label protectionStatus=new Label();
+    DateTime nextProtectionRestart=DateTime.MinValue;
     readonly NotifyIcon tray=new NotifyIcon();
     readonly System.Windows.Forms.Timer timer=new System.Windows.Forms.Timer();
     MonitorSettings config;
@@ -150,8 +152,7 @@ partial class MonitorWindow : Form {
         InitializeUpdates(args,appData);
         var trayMenu=new ContextMenuStrip();
         trayMenu.Items.Add("打开窗口",null,delegate { RestoreWindow(); });
-        trayMenu.Items.Add("停止监控",null,delegate { StopWorker(); });
-        trayMenu.Items.Add("退出",null,delegate { RequestExit(); });
+        trayMenu.Items.Add("退出管家（停止额度保护）",null,delegate { RequestExit(); });
         tray.Icon=Icon; tray.Text="Codex 任务托管"; tray.ContextMenuStrip=trayMenu; tray.Visible=true;
         tray.DoubleClick+=delegate { RestoreWindow(); };
         Resize+=delegate { if(WindowState==FormWindowState.Minimized && !smokeTest && config.trayBackgroundEnabled) Hide(); };
@@ -162,7 +163,7 @@ partial class MonitorWindow : Form {
             else if(config.trayBackgroundEnabled) { Hide(); } else RequestExit();
         };
         Shown+=delegate { if(!args.Contains("--no-start"))StartWorker();else stopRequested=true; if(args.Contains("--tray")) Hide(); };
-        timer.Interval=1000; timer.Tick+=delegate { UpdateScreen(); ProcessWakeRequest(); if(captureDir!=null && lastState!=null && Get(lastState,"lastQuota")!=null) { try {Directory.CreateDirectory(captureDir);using(var image=new Bitmap(Width,Height)){DrawToBitmap(image,new Rectangle(Point.Empty,Size));image.Save(Path.Combine(captureDir,"live-window.png"));}captureDir=null;}catch(Exception e){AppendLog("预览保存失败："+e.Message);} } }; timer.Start();
+        timer.Interval=1000; timer.Tick+=delegate { UpdateScreen(); ProcessWakeRequest(); KeepProtectionRunning(); if(captureDir!=null && lastState!=null && Get(lastState,"lastQuota")!=null) { try {Directory.CreateDirectory(captureDir);using(var image=new Bitmap(Width,Height)){DrawToBitmap(image,new Rectangle(Point.Empty,Size));image.Save(Path.Combine(captureDir,"live-window.png"));}captureDir=null;}catch(Exception e){AppendLog("预览保存失败："+e.Message);} } }; timer.Start();
         FormClosed+=delegate { timer.Dispose(); wakeEvent.Dispose();tray.Visible=false; tray.Dispose(); if(worker!=null) worker.Dispose(); };
     }
     static string Argument(string[] args,string key) { int i=Array.IndexOf(args,key); return i>=0 && i+1<args.Length ? args[i+1] : null; }
@@ -200,10 +201,10 @@ partial class MonitorWindow : Form {
         var content=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,0,0,14),BackColor=BackColor};content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,62));content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,38));
         var targets=new SurfacePanel{Dock=DockStyle.Fill,Margin=new Padding(0,0,14,0),Padding=new Padding(20)};
         var left=Rows(42,27,42,36,-1,36,54);var titleRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,BackColor=Color.White};titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,124));titleRow.Controls.Add(Heading("◉  托管目标",21),0,0);
-        start.Text="开始监控";start.Dock=DockStyle.Fill;start.Margin=new Padding(0,0,0,4);start.FlatStyle=FlatStyle.Flat;start.FlatAppearance.BorderColor=Theme.Border;start.BackColor=Color.FromArgb(238,246,255);start.Click+=delegate{if(WorkerRunning())StopWorker();else StartWorker();};titleRow.Controls.Add(start,1,0);left.Controls.Add(titleRow,0,0);
+        protectionStatus.Text="● 额度保护";protectionStatus.Dock=DockStyle.Fill;protectionStatus.TextAlign=ContentAlignment.MiddleRight;protectionStatus.ForeColor=Theme.Muted;titleRow.Controls.Add(protectionStatus,1,0);left.Controls.Add(titleRow,0,0);
         left.Controls.Add(new Label{Text="搜索原任务并勾选托管，支持按工作目录查找",Dock=DockStyle.Fill,ForeColor=Theme.Muted},0,1);
         var searchRow=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,Margin=new Padding(0,2,0,6),BackColor=Color.White};searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));searchRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,44));search.Dock=DockStyle.Fill;search.Font=new Font("Microsoft YaHei UI",11);search.Margin=new Padding(0,4,9,0);search.AccessibleName="搜索任务或工作目录";search.TextChanged+=delegate{RenderChats(true);};searchRow.Controls.Add(search,0,0);
-        refresh.Text="↻";refresh.Dock=DockStyle.Fill;refresh.FlatStyle=FlatStyle.Flat;refresh.FlatAppearance.BorderColor=Theme.Border;refresh.Click+=delegate{if(WorkerRunning())Signal("Refresh");else AppendLog("监控已停止，请点击“开始监控”获取最新额度和任务状态。");};searchRow.Controls.Add(refresh,1,0);left.Controls.Add(searchRow,0,2);
+        refresh.Text="↻";refresh.Dock=DockStyle.Fill;refresh.FlatStyle=FlatStyle.Flat;refresh.FlatAppearance.BorderColor=Theme.Border;refresh.Click+=delegate{if(WorkerRunning())Signal("Refresh");else StartWorker();};searchRow.Controls.Add(refresh,1,0);left.Controls.Add(searchRow,0,2);
         var filters=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false,BackColor=Color.White};showAll.Text="显示全部任务";showAll.AutoSize=true;showAll.Margin=new Padding(0,5,14,0);showAll.CheckedChanged+=delegate{if(!loading){WriteSettings();RenderChats(true);}};filters.Controls.Add(showAll);listTitle.AutoSize=true;listTitle.ForeColor=Theme.Muted;listTitle.Margin=new Padding(0,6,0,0);filters.Controls.Add(listTitle);left.Controls.Add(filters,0,3);
         chats.Dock=DockStyle.Fill; chats.BackgroundColor=Color.White; chats.BorderStyle=BorderStyle.None; chats.AllowUserToAddRows=false; chats.AllowUserToDeleteRows=false;
         chats.RowHeadersVisible=false; chats.AutoSizeRowsMode=DataGridViewAutoSizeRowsMode.None; chats.RowTemplate.Height=34;
@@ -241,7 +242,7 @@ partial class MonitorWindow : Form {
         cardInfo.Dock=DockStyle.Fill;cardInfo.ForeColor=Theme.Muted;rules.Controls.Add(cardInfo,0,3);policySummary.Dock=DockStyle.Fill;policySummary.ForeColor=Theme.Muted;policySummary.AutoEllipsis=true;rules.Controls.Add(policySummary,0,4);policy.Controls.Add(rules);right.Controls.Add(policy,0,4);content.Controls.Add(right,1,0);root.Controls.Add(content,0,1);
         var status=new SurfacePanel{Dock=DockStyle.Fill,Padding=new Padding(20,12,20,10)};var statusRows=Rows(31,49,25);statusRows.Controls.Add(Heading("▤  连接与运行状态",18),0,0);
         var metrics=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=4,BackColor=Color.White};for(int i=0;i<4;i++)metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,25));
-        var values=new[]{connectionState,monitorState,quotaFreshState,taskState};var captions=new[]{"客户端连接","监控状态","额度数据","任务与等待原因"};for(int i=0;i<4;i++){var metric=Rows(20,27);metric.Controls.Add(new Label{Text=captions[i],Dock=DockStyle.Fill,ForeColor=Theme.Muted},0,0);values[i].Dock=DockStyle.Fill;values[i].AutoEllipsis=true;values[i].ForeColor=Theme.Ink;values[i].Font=new Font("Microsoft YaHei UI",10,FontStyle.Bold);metric.Controls.Add(values[i],0,1);metrics.Controls.Add(metric,i,0);}statusRows.Controls.Add(metrics,0,1);freshness.Dock=DockStyle.Fill;freshness.ForeColor=Theme.Muted;statusRows.Controls.Add(freshness,0,2);status.Controls.Add(statusRows);root.Controls.Add(status,0,2);Controls.Add(root);
+        var values=new[]{connectionState,monitorState,quotaFreshState,taskState};var captions=new[]{"客户端连接","额度保护","额度数据","任务与等待原因"};for(int i=0;i<4;i++){var metric=Rows(20,27);metric.Controls.Add(new Label{Text=captions[i],Dock=DockStyle.Fill,ForeColor=Theme.Muted},0,0);values[i].Dock=DockStyle.Fill;values[i].AutoEllipsis=true;values[i].ForeColor=Theme.Ink;values[i].Font=new Font("Microsoft YaHei UI",10,FontStyle.Bold);metric.Controls.Add(values[i],0,1);metrics.Controls.Add(metric,i,0);}statusRows.Controls.Add(metrics,0,1);freshness.Dock=DockStyle.Fill;freshness.ForeColor=Theme.Muted;statusRows.Controls.Add(freshness,0,2);status.Controls.Add(statusRows);root.Controls.Add(status,0,2);Controls.Add(root);
         threshold.ValueChanged+=delegate{if(!loading){if(resumeThreshold.Value<=threshold.Value)resumeThreshold.Value=threshold.Value+1;SaveAndApply();}};
         resumeThreshold.ValueChanged+=delegate{if(!loading){if(resumeThreshold.Value<=threshold.Value)threshold.Value=resumeThreshold.Value-1;SaveAndApply();}};
         autoResume.CheckedChanged+=delegate{if(!loading)SaveAndApply();};autoReset.CheckedChanged+=delegate{if(!loading)SaveAndApply();};
@@ -287,11 +288,12 @@ partial class MonitorWindow : Form {
     void UpdateStatusPanel(){
         bool running=WorkerRunning()&&!stopRequested;DateTime sampled;bool fresh=lastState!=null&&DateTime.TryParse(Str(Get(lastState,"lastCheckedAt")),out sampled)&&(DateTime.UtcNow-sampled.ToUniversalTime()).TotalSeconds<Math.Max(90,config.pollSeconds+30);
         connectionState.Text=running?(fresh?"● 已连接 Codex":"○ 等待客户端"):"○ 尚未检查";connectionState.ForeColor=running&&fresh?Theme.Green:Theme.Muted;
-        monitorState.Text=running?(config.observeOnly?"只读观察":"● 监控中"):"● 已停止";monitorState.ForeColor=running?Theme.Green:Theme.Muted;
+        monitorState.Text=running?(config.observeOnly?"只读观察":"● 保护中"):exiting?"正在退出":stopRequested?"保护未开启":"等待自动重连";monitorState.ForeColor=running?Theme.Green:Theme.Muted;
+        protectionStatus.Text=running?(config.observeOnly?"● 只读观察":"● 额度保护中"):exiting?"正在退出":stopRequested?"● 保护未开启":"● 自动重连中";protectionStatus.ForeColor=running?Theme.Green:Theme.Muted;
         quotaFreshState.Text=fresh?"数据新鲜":"上次记录 · 待刷新";quotaFreshState.ForeColor=fresh?Theme.Green:Color.FromArgb(210,137,52);
         selectedTask.Text=chats.CurrentRow==null?"选择需要控制的任务":Str(chats.CurrentRow.Cells[2].Value);
         string reason=chats.CurrentRow==null?"":Str(chats.CurrentRow.Cells[3].Value);taskState.Text=reason.Length>0?reason:running?"等待选择任务":"点击开始监控";
-        if(!running)freshness.Text="监控已停止，额度与任务显示上次记录；点击“开始监控”重新查询。";
+        if(!running)freshness.Text=exiting?"正在退出管家；退出后不再执行额度保护。":stopRequested?"额度保护未运行，显示上次记录；刷新或继续任务可恢复后台。":"额度保护正在自动重连，显示上次记录。";
         if(DateTime.UtcNow<actionFeedbackUntil){selectedTask.Text=actionFeedback;taskState.Text=actionFeedback;}
     }
     string StartupShortcut() {return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup),"Codex 任务托管.lnk");}
@@ -340,8 +342,13 @@ partial class MonitorWindow : Form {
         wakePending=false;
         if(WorkerRunning())Signal("Refresh");else StartWorker();
     }
+    void KeepProtectionRunning() {
+        if(exiting || stopRequested || smokeTest || WorkerRunning() || DateTime.UtcNow<nextProtectionRestart)return;
+        StartWorker();
+    }
     void StartWorker() {
         if(WorkerRunning() || exiting) return;
+        nextProtectionRestart=DateTime.UtcNow.AddSeconds(30);
         try {
             WriteSettings(); stopRequested=false;
             if(worker!=null) worker.Dispose();
@@ -352,9 +359,9 @@ partial class MonitorWindow : Form {
             worker.StartInfo.StandardOutputEncoding=Encoding.UTF8; worker.StartInfo.StandardErrorEncoding=Encoding.UTF8;
             worker.OutputDataReceived+=WorkerOutput; worker.ErrorDataReceived+=WorkerOutput;
             worker.Start(); worker.BeginOutputReadLine(); worker.BeginErrorReadLine();
-            startedAt=DateTime.Now; start.Text="停止监控"; start.Enabled=true; mode.Text="正在查询…";
+            startedAt=DateTime.Now; mode.Text="正在查询额度…";
             AppendLog("后台监控已启动，不会打开终端窗口。");
-        } catch(Exception e) { worker=null; AppendLog("启动失败："+e.Message); mode.Text="启动失败"; start.Text="开始监控"; }
+        } catch(Exception e) { worker=null; AppendLog("启动失败："+e.Message); mode.Text="额度保护连接失败，等待自动重连"; }
     }
     void WorkerOutput(object sender,DataReceivedEventArgs e) {
         if(String.IsNullOrWhiteSpace(e.Data) || IsDisposed || !IsHandleCreated) return;
@@ -404,7 +411,7 @@ partial class MonitorWindow : Form {
     }
     void StopWorker() {
         if(!WorkerRunning()) return;
-        stopRequested=true; Signal("Stop"); start.Enabled=false; mode.Text="正在停止监控…";
+        stopRequested=true; Signal("Stop"); mode.Text="正在关闭额度保护…";
         AppendLog("已请求停止监控；当前聊天照常执行，暂停记录保留。");
     }
     void RequestExit() {
@@ -503,8 +510,7 @@ partial class MonitorWindow : Form {
         } catch(IOException) { } catch(Exception e) { mode.Text="状态读取失败："+e.Message; }
         five.Tick(); week.Tick();UpdateStatusPanel();
         if(!WorkerRunning()) {
-            start.Enabled=true; start.Text="开始监控";
-            mode.Text=stopRequested ? "监控已停止，点击“开始监控”继续" : "监控未运行，请查看日志";
+            mode.Text=stopRequested ? "额度保护未开启；刷新或继续任务可恢复" : "额度保护等待自动重连";
             if(exiting) {FinishExit(); return;}
         }
         if(smokeTest && !checkFinished) SmokeCheck();
