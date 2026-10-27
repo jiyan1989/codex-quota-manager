@@ -1,6 +1,7 @@
 # Codex 任务托管
 
 [![最新稳定版](https://img.shields.io/github/v/release/jiyan1989/codex-quota-manager?style=flat&logo=github&logoColor=white&label=version&color=2563eb)](https://github.com/jiyan1989/codex-quota-manager/releases/latest)
+[![GitHub 收藏数量](https://img.shields.io/github/stars/jiyan1989/codex-quota-manager?style=social&logo=github&label=Stars)](https://github.com/jiyan1989/codex-quota-manager/stargazers)
 [![MIT 开源许可证](https://img.shields.io/github/license/jiyan1989/codex-quota-manager?style=flat&label=license&color=22c55e)](LICENSE)
 [![累计下载量](https://img.shields.io/github/downloads/jiyan1989/codex-quota-manager/total?style=flat&logo=github&logoColor=white&label=downloads&color=0891b2)](https://github.com/jiyan1989/codex-quota-manager/releases)
 [![Windows 64位平台](https://img.shields.io/badge/Windows-x64-0078D4?style=flat)](https://github.com/jiyan1989/codex-quota-manager/releases/latest)
@@ -127,6 +128,12 @@ args = ["-X", "utf8", "/replace/with/absolute/path/integration/manager_mcp.py"]
 ## 卸载
 
 在设置中关闭随 Windows 启动，从托盘退出，再移除程序文件；已配置 MCP 的用户需移除对应配置。需要清除记录时，可自行删除上述本地数据目录。
+
+## 收藏增长趋势
+
+[![Star History（收藏增长趋势）](https://api.star-history.com/svg?repos=jiyan1989/codex-quota-manager&type=Date)](https://www.star-history.com/#jiyan1989/codex-quota-manager&Date)
+
+图表依据 GitHub 的真实收藏记录自动生成，点击可查看交互图表。
 
 ## 来源与许可证
 
