@@ -47,16 +47,19 @@ partial class MonitorWindow {
             }catch(Exception error){OnUi(delegate{checkingUpdate=false;SetUpdateStatus("检查更新失败，可稍后重试："+error.Message);});}
         });
     }
+    Control SingleActionRow(Button button){
+        var row=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=1,Margin=Padding.Empty,Padding=Padding.Empty};
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,132));row.RowStyles.Add(new RowStyle(SizeType.Absolute,36));
+        button.Size=new Size(122,36);button.Anchor=AnchorStyles.Top|AnchorStyles.Left;button.Margin=Padding.Empty;row.Controls.Add(button,0,0);return row;
+    }
     Control CreateUpdatePanel(Form dialog){
         var panel=Rows(24,28,38,28);panel.BackColor=dialog.BackColor;
-        panel.Controls.Add(new Label{Text="当前版本 v"+AppUpdater.CurrentVersion+" · 更新保留设置和任务记录",Dock=DockStyle.Fill,ForeColor=Theme.Muted},0,0);
-        var status=new Label{Text=updateStatus,Dock=DockStyle.Fill,AutoEllipsis=true,ForeColor=Theme.Ink};panel.Controls.Add(status,0,1);
-        var buttons=new FlowLayoutPanel{Dock=DockStyle.Fill,Margin=Padding.Empty,WrapContents=false};
-        var check=MakeButton("检查更新",delegate{CheckForUpdates(true);});
-        var install=MakeButton("一键更新",delegate{InstallAvailableUpdate();});buttons.Controls.Add(check);buttons.Controls.Add(install);panel.Controls.Add(buttons,0,2);
+        panel.Controls.Add(new Label{Text="当前版本 v"+AppUpdater.CurrentVersion+" · 更新保留设置和任务记录",Dock=DockStyle.Fill,Margin=Padding.Empty,ForeColor=Theme.Muted},0,0);
+        var status=new Label{Text=updateStatus,Dock=DockStyle.Fill,Margin=Padding.Empty,AutoEllipsis=true,ForeColor=Theme.Ink};panel.Controls.Add(status,0,1);
+        var updateAction=MakeButton("检查更新",delegate{if(availableRelease!=null)InstallAvailableUpdate();else CheckForUpdates(true);});updateAction.Name="updateAction";panel.Controls.Add(SingleActionRow(updateAction),0,2);
         var automatic=new CheckBox{Text="启动时及每天自动检查（仅提醒，不自动安装）",Checked=config.checkUpdatesAutomatically,AutoSize=true,Margin=new Padding(0,5,0,0)};
         automatic.CheckedChanged+=delegate{config.checkUpdatesAutomatically=automatic.Checked;nextUpdateCheck=DateTime.MinValue;WriteSettings();};panel.Controls.Add(automatic,0,3);
-        Action changed=delegate{if(dialog.IsDisposed)return;status.Text=updateStatus;check.Enabled=!checkingUpdate&&!installingUpdate;install.Enabled=availableRelease!=null&&!checkingUpdate&&!installingUpdate;};
+        Action changed=delegate{if(dialog.IsDisposed)return;status.Text=updateStatus;updateAction.Enabled=!checkingUpdate&&!installingUpdate;updateAction.Text=installingUpdate?"更新中…":checkingUpdate?"检查中…":availableRelease!=null?"一键更新":"检查更新";};
         UpdateStatusChanged+=changed;dialog.FormClosed+=delegate{UpdateStatusChanged-=changed;};changed();return panel;
     }
     string[] UpdateRestartArguments(bool restartMonitoring){

@@ -280,7 +280,7 @@ partial class MonitorWindow : Form {
         var background=new ToggleSwitch{Checked=config.trayBackgroundEnabled};rows.Controls.Add(GeneralSwitch("托盘后台运行","最小化或关闭窗口后驻留托盘；关闭此项后，关窗退出。",background),0,6);
         var resetOptions=new FlowLayoutPanel{Dock=DockStyle.Fill,Margin=Padding.Empty,Padding=new Padding(0,6,0,0),WrapContents=false};var resetInput=new NumericUpDown{Minimum=0,Maximum=99,DecimalPlaces=1,Value=(decimal)config.resetWeeklyRemainingPercent,Width=58};resetOptions.Controls.Add(Inline("重置卡触发：周剩余 ≤"));resetOptions.Controls.Add(resetInput);resetOptions.Controls.Add(Inline("%（仅在主界面开关开启时）"));rows.Controls.Add(resetOptions,0,7);
         rows.Controls.Add(Heading("版本更新",12),0,8);rows.Controls.Add(CreateUpdatePanel(dialog),0,9);
-        var buttons=new FlowLayoutPanel{Dock=DockStyle.Fill,Margin=Padding.Empty};buttons.Controls.Add(MakeButton("查看完整日志",delegate{OpenLogs();}));buttons.Controls.Add(MakeButton("关闭",delegate{dialog.Close();}));rows.Controls.Add(buttons,0,10);
+        rows.Controls.Add(SingleActionRow(MakeButton("查看完整日志",delegate{OpenLogs();})),0,10);
         startup.CheckedChanged+=delegate{loginStart.Checked=startup.Checked;};background.CheckedChanged+=delegate{config.trayBackgroundEnabled=background.Checked;WriteSettings();};resetInput.ValueChanged+=delegate{resetThreshold.Value=resetInput.Value;SaveAndApply();};dialog.Controls.Add(rows);return dialog;
     }
     void OpenSettings(){using(var dialog=CreateSettingsDialog()){dialog.ShowDialog(this);}}
