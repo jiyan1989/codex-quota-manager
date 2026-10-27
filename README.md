@@ -1,14 +1,13 @@
 # Codex 任务托管
 
-[![最新稳定版](https://img.shields.io/github/v/release/jiyan1989/codex-quota-manager?style=for-the-badge&logo=github&logoColor=white&label=VERSION&color=2563eb)](https://github.com/jiyan1989/codex-quota-manager/releases/latest)
-[![MIT 开源许可证](https://img.shields.io/github/license/jiyan1989/codex-quota-manager?style=for-the-badge&label=LICENSE&color=22c55e)](LICENSE)
-[![累计下载量](https://img.shields.io/github/downloads/jiyan1989/codex-quota-manager/total?style=for-the-badge&logo=github&logoColor=white&label=DOWNLOADS&color=0891b2)](https://github.com/jiyan1989/codex-quota-manager/releases)
-[![Windows 64位平台](https://img.shields.io/badge/WINDOWS-x64-0078D4?style=for-the-badge)](https://github.com/jiyan1989/codex-quota-manager/releases/latest)
-
-[![C# 与 .NET Framework 4.5及以上](https://img.shields.io/badge/C%23-.NET_Framework_4.5%2B-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](#从源码构建)
-[![PowerShell 7及以上运行环境](https://img.shields.io/badge/POWERSHELL-7%2B-5391FE?style=for-the-badge)](#下载与运行)
-[![Python 3.10及以上可选集成](https://img.shields.io/badge/PYTHON-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](#可选-codex-集成)
-[![MCP 本地标准输入输出接口](https://img.shields.io/badge/MCP-LOCAL_STDIO-16a34a?style=for-the-badge)](#可选-codex-集成)
+[![最新稳定版](https://img.shields.io/github/v/release/jiyan1989/codex-quota-manager?style=flat&logo=github&logoColor=white&label=version&color=2563eb)](https://github.com/jiyan1989/codex-quota-manager/releases/latest)
+[![MIT 开源许可证](https://img.shields.io/github/license/jiyan1989/codex-quota-manager?style=flat&label=license&color=22c55e)](LICENSE)
+[![累计下载量](https://img.shields.io/github/downloads/jiyan1989/codex-quota-manager/total?style=flat&logo=github&logoColor=white&label=downloads&color=0891b2)](https://github.com/jiyan1989/codex-quota-manager/releases)
+[![Windows 64位平台](https://img.shields.io/badge/Windows-x64-0078D4?style=flat)](https://github.com/jiyan1989/codex-quota-manager/releases/latest)
+[![C# 与 .NET Framework 4.5及以上](https://img.shields.io/badge/C%23-.NET_Framework_4.5%2B-512BD4?style=flat&logo=dotnet&logoColor=white)](#从源码构建)
+[![PowerShell 7及以上运行环境](https://img.shields.io/badge/PowerShell-7%2B-5391FE?style=flat)](#下载与运行)
+[![Python 3.10及以上可选集成](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat&logo=python&logoColor=white)](#可选-codex-集成)
+[![MCP 本地标准输入输出接口](https://img.shields.io/badge/MCP-stdio-16a34a?style=flat)](#可选-codex-集成)
 
 Windows 本地 Codex 额度监控与任务托管工具。在五小时额度接近暂停线时暂停所选任务，额度恢复后按设置继续；独立的周额度保留底线始终生效，避免五小时反复刷新后持续消耗周额度。
 
