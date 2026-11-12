@@ -43,6 +43,8 @@ $script:Journal = $null
 $script:Subscriptions = @{}
 $script:FleetJournal = $null
 $script:FleetStatePath = $null
+$script:CodexLocation = ''
+$script:CodexInstallation = $null
 
 function Write-JsonAtomic($Path, $Value) {
     $temporary = $Path + '.tmp'
@@ -61,6 +63,12 @@ function Read-Json($Path) {
 function Read-MonitorSettings {
     if(!$SettingsPath -or !(Test-Path -LiteralPath $SettingsPath)){return}
     $settings=Read-Json $SettingsPath
+    $location=[string]$settings.codexLocation
+    if($location -ne $script:CodexLocation){
+        $script:CodexLocation=$location
+        $script:CodexInstallation=$null
+        Stop-QuotaServer
+    }
     if($settings.pollSeconds -lt 1 -or $settings.pollSeconds -gt 3600 -or $settings.pauseRemainingPercent -lt 0 -or $settings.pauseRemainingPercent -gt 99){throw 'Invalid monitor settings.'}
     if($null -ne $settings.resetWeeklyRemainingPercent -and ($settings.resetWeeklyRemainingPercent -lt 0 -or $settings.resetWeeklyRemainingPercent -gt 99)){throw 'Invalid monitor settings.'}
     if($null -ne $settings.nearLimitRemainingPercent -and ($settings.nearLimitRemainingPercent -lt 0 -or $settings.nearLimitRemainingPercent -gt 100)){throw 'Invalid monitor settings.'}
@@ -193,6 +201,9 @@ function Save-Journal {
 }
 function Get-ChineseReason($Reason) {
     switch -Regex ([string]$Reason) {
+        'Codex location invalid' { return '所选 Codex 位置不可用，请在设置中的“Codex 位置”重新选择，或恢复自动查找。' }
+        'Codex CLI executable was not found' { return '未找到 Codex 运行程序，请打开 Codex，或在设置中的“Codex 位置”选择它的程序文件。' }
+        'Codex desktop is not connected' { return 'Codex 桌面客户端未连接，请打开并登录后点击刷新。' }
         'resume-outcome-unknown-no-resend' { return '没有确认到继续请求的结果。为避免重复执行，已停止自动处理；请先查看聊天当前进度。' }
         'pause-not-confirmed' { return '客户端尚未确认暂停结果，请查看聊天是否仍在执行。' }
         'user-or-another-client-started-new-work|turn-changed-before-interrupt' { return '你或其他客户端已经改变了任务进度，本次旧任务的自动恢复已取消。' }
@@ -201,7 +212,7 @@ function Get-ChineseReason($Reason) {
         'thread-finished-before-pause-confirmation' { return '任务在暂停确认前已经完成。' }
         'identity mismatch|identity/mode mismatch' { return '账号或聊天身份与保存的记录不一致，请核对登录账号和状态目录。' }
         'mode mismatch' { return '当前运行模式与已有记录不一致，请使用对应的模式或另一个状态目录。' }
-        'Unsupported snapshot|request-version-mismatch' { return '客户端返回的通信协议无法解析，请保留日志排查。' }
+        'Unsupported snapshot|request-version-mismatch' { return '当前 Codex 版本暂不兼容，额度保护已停止，请检查任务管家更新。' }
         'Invalid monitor settings' { return '设置文件中的查询间隔或暂停阈值无效，请在窗口内重新保存设置。' }
         'Conversion from JSON|Invalid IPC frame' { return '客户端返回的数据无法解析。请使用最新脚本；若仍失败，保留事件日志排查。' }
         'timeout|timed out|超时' { return '等待客户端响应超时，请确认 Codex 客户端保持打开且网络可用。' }
@@ -210,7 +221,6 @@ function Get-ChineseReason($Reason) {
         'account login is required' { return '需要先登录 ChatGPT 账号，再运行监控器。' }
         'Five-hour quota is unavailable' { return '暂时无法取得五小时额度，自动控制已停止。' }
         'Codex desktop package was not found' { return '没有找到 Codex 桌面客户端，请检查安装状态。' }
-        'Codex CLI executable was not found' { return '没有找到 Codex 命令程序，请检查桌面客户端是否完整安装。' }
         'already running|already controls' { return '已有监控实例正在运行，请先停止旧实例，避免重复控制。' }
         'No saved run state' { return '还没有监控记录，请先运行 start-monitor.ps1 启动监控。' }
         'This run has ended' { return '这份单聊天记录已结束；重新登记时需要换一个状态目录。' }
@@ -218,6 +228,23 @@ function Get-ChineseReason($Reason) {
         'Test mode|simulated|TestQuotaFile|requires explicit' { return '测试配置不完整或真实额度不足，请检查测试文件和账号额度。' }
         default { return '发生未识别的运行错误，原始原因保存在事件日志中，请保留日志排查。' }
     }
+}
+function Get-ConnectionProblem($Reason) {
+    $code=switch -Regex ([string]$Reason) {
+        'Codex location invalid' {'location-invalid';break}
+        'Codex CLI executable was not found|Codex desktop package was not found' {'codex-missing';break}
+        'Unsupported snapshot|request-version-mismatch' {'incompatible';break}
+        'identity mismatch|identity/mode mismatch' {'identity-mismatch';break}
+        'account login is required' {'login-required';break}
+        'Codex desktop is not connected|connection closed|server closed|broken pipe|管道.*结束' {'disconnected';break}
+        default {'connection-error'}
+    }
+    return @{code=$code;message=(Get-ChineseReason $Reason)}
+}
+function Write-ConnectionStatus($Status) {
+    # Structured stdout reaches the GUI even if startup failed before state.json existed.
+    Write-Host ('CQM_CONNECTION '+($Status|ConvertTo-Json -Compress))
+    if($script:Journal){$script:Journal.connectionStatus=$Status}
 }
 function Get-ChatLabel {
     if($script:Journal.displayTitle){return ('聊天「{0}」' -f $script:Journal.displayTitle)}
@@ -378,9 +405,28 @@ function Show-SavedStatus($State,$Path) {
     Write-Host ('状态文件：{0}' -f $Path)
 }
 function Get-DesktopVersion {
-    $package = Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop
-    if (!$package) { throw 'Codex desktop package was not found.' }
-    return $package.Version.ToString()
+    $installation=Resolve-CodexInstallation
+    if($installation.desktopVersion){return $installation.desktopVersion}
+    if($installation.desktopPath){
+        try {
+            $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($installation.desktopPath)
+            foreach($version in @($info.ProductVersion,$info.FileVersion)){
+                if($version -and $version -ne '0.0.0.0'){$installation.desktopVersion=$version;return $version}
+            }
+        } catch { }
+    }
+    try {
+        foreach($package in @(Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop)){
+            if(!$package.InstallLocation -or !$package.Version){continue}
+            $prefix=$package.InstallLocation.TrimEnd('\')+'\'
+            if($installation.cliPath.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){
+                $installation.desktopVersion=$package.Version.ToString()
+                return $installation.desktopVersion
+            }
+        }
+    } catch { }
+    $installation.desktopVersion='版本未提供'
+    return '版本未提供'
 }
 function Close-Ipc {
     if ($script:Pipe) {
@@ -444,7 +490,8 @@ function Invoke-Ipc($Method, $Params, [int]$Version, [int]$TimeoutSeconds = 20, 
 function Connect-Ipc([switch]$WithoutOwner) {
     Close-Ipc
     $script:Pipe = [IO.Pipes.NamedPipeClientStream]::new('.', 'codex-ipc', [IO.Pipes.PipeDirection]::InOut, [IO.Pipes.PipeOptions]::Asynchronous)
-    $script:Pipe.Connect(4000)
+    try {$script:Pipe.Connect(4000)}
+    catch {Close-Ipc;throw 'Codex desktop is not connected.'}
     $script:ClientId = 'initializing-client'
     $reply = Invoke-Ipc 'initialize' @{clientType='quota-monitor-v1'} 0
     $script:ClientId = $reply.result.clientId
@@ -520,17 +567,109 @@ function Invoke-QuotaRpc($Method, $Params) {
         }
     }
 }
-function Get-CodexExecutable {
-    $command=Get-Command codex.exe -CommandType Application -ErrorAction SilentlyContinue
-    if($command){return $command.Source}
-    $binDirectory=Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
-    if(Test-Path -LiteralPath $binDirectory) {
-        foreach($directory in @(Get-ChildItem -LiteralPath $binDirectory -Directory|Sort-Object LastWriteTime -Descending)) {
-            $candidate=Join-Path $directory.FullName 'codex.exe'
-            if(Test-Path -LiteralPath $candidate){return $candidate}
+function Get-RunningCodexLocations {
+    $sessionId=[Diagnostics.Process]::GetCurrentProcess().SessionId
+    foreach($process in @(Get-Process -Name Codex -ErrorAction SilentlyContinue)){
+        try {
+            if($process.SessionId -eq $sessionId -and $process.Path){$process.Path}
+        } catch { } finally {$process.Dispose()}
+    }
+}
+function Get-CodexPackageLocations {
+    try {
+        Get-AppxPackage -Name OpenAI.Codex -ErrorAction Stop |
+            Sort-Object Version -Descending | ForEach-Object {$_.InstallLocation}
+    } catch { } # Portable installs and hosts without Appx cmdlets remain supported.
+}
+function Get-CodexCommonLocations {
+    foreach($base in @($env:LOCALAPPDATA,$env:ProgramFiles,${env:ProgramFiles(x86)})){
+        if(!$base){continue}
+        Join-Path $base 'OpenAI\Codex'
+        Join-Path $base 'Programs\Codex'
+        Join-Path $base 'Codex'
+    }
+    if($env:LOCALAPPDATA){
+        $bin=Join-Path $env:LOCALAPPDATA 'OpenAI\Codex\bin'
+        $bin
+        if(Test-Path -LiteralPath $bin -PathType Container){
+            Get-ChildItem -LiteralPath $bin -Directory -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending | ForEach-Object {$_.FullName}
         }
     }
-    throw 'Codex CLI executable was not found in PATH or the desktop local bin directory.'
+    if($env:APPDATA){Join-Path $env:APPDATA 'npm'}
+    Get-Command codex.exe -CommandType Application -All -ErrorAction SilentlyContinue |
+        ForEach-Object {$_.Source}
+}
+function Find-CodexAtLocation([string]$Location,[string]$Source) {
+    if([string]::IsNullOrWhiteSpace($Location)){return}
+    try {
+        $path=[IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables($Location.Trim().Trim('"')))
+        if(Test-Path -LiteralPath $path -PathType Leaf){
+            if([IO.Path]::GetFileName($path) -ine 'codex.exe'){return}
+            $root=[IO.Path]::GetDirectoryName($path)
+        } elseif(Test-Path -LiteralPath $path -PathType Container){$root=$path}
+        else {return}
+        $roots=[Collections.Generic.List[string]]::new()
+        $roots.Add($root)
+        if([IO.Path]::GetFileName($root) -ieq 'resources'){$roots.Add([IO.Path]::GetDirectoryName($root))}
+        $desktop=$null
+        foreach($base in $roots.ToArray()){
+            foreach($relative in @('Codex.exe','app\Codex.exe')){
+                $candidate=Join-Path $base $relative
+                $parent=[IO.Path]::GetDirectoryName($candidate)
+                if((Test-Path -LiteralPath $candidate -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $parent 'resources\app.asar'))){
+                    $desktop=$candidate
+                    break
+                }
+            }
+            if($desktop){break}
+        }
+        $relativeCliPaths=@(
+            'resources\codex.exe','app\resources\codex.exe','codex.exe','bin\codex.exe',
+            'vendor\x86_64-pc-windows-msvc\codex\codex.exe',
+            'node_modules\@openai\codex\vendor\x86_64-pc-windows-msvc\codex\codex.exe',
+            'node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\codex\codex.exe',
+            'node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\codex\codex.exe'
+        )
+        foreach($base in $roots){
+            foreach($relative in $relativeCliPaths){
+                $candidate=Join-Path $base $relative
+                if(!(Test-Path -LiteralPath $candidate -PathType Leaf)){continue}
+                $parent=[IO.Path]::GetDirectoryName($candidate)
+                # The desktop launcher and CLI share a filename on Windows.
+                if((Test-Path -LiteralPath (Join-Path $parent 'resources\app.asar')) -or (Test-Path -LiteralPath (Join-Path $parent 'chrome_elf.dll'))){continue}
+                return @{cliPath=$candidate;desktopPath=$desktop;source=$Source}
+            }
+        }
+    } catch [ArgumentException] { } catch [NotSupportedException] { }
+}
+function Resolve-CodexInstallation {
+    if($script:CodexInstallation -and (Test-Path -LiteralPath $script:CodexInstallation.cliPath -PathType Leaf)){
+        return $script:CodexInstallation
+    }
+    if($script:CodexLocation){
+        $found=Find-CodexAtLocation $script:CodexLocation 'manual'
+        if(!$found){throw 'Codex location invalid.'}
+        $script:CodexInstallation=$found
+        return $found
+    }
+    $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach($source in @('running','package','common')){
+        $locations=switch($source){
+            'running' {Get-RunningCodexLocations}
+            'package' {Get-CodexPackageLocations}
+            'common' {Get-CodexCommonLocations}
+        }
+        foreach($location in $locations){
+            if(!$location -or !$seen.Add($location)){continue}
+            $found=Find-CodexAtLocation $location $source
+            if($found){$script:CodexInstallation=$found;return $found}
+        }
+    }
+    throw 'Codex CLI executable was not found.'
+}
+function Get-CodexExecutable {
+    return (Resolve-CodexInstallation).cliPath
 }
 function Start-QuotaServer {
     Stop-QuotaServer
@@ -896,8 +1035,8 @@ function Get-UnloadedWaitReason($Record) {
 }
 function Start-AllMonitor {
     $rootDirectory=$script:RunDirectory; $script:ThreadId='all'
-    $version=Get-DesktopVersion
     Read-MonitorSettings
+    $version=Get-DesktopVersion
     $path=Join-Path $rootDirectory 'state.json'
     $fleet=$(if(Test-Path -LiteralPath $path){Read-Json $path}else{@{scope='all';mode=$Mode;phase='observing';accountId=$AccountId;threads=@{};lastControlId=$null}})
     if($fleet.scope -ne 'all' -or $fleet.mode -ne $Mode){throw 'Saved all-chat state mode mismatch.'}
@@ -919,6 +1058,8 @@ function Start-AllMonitor {
         }
         try {
             Read-MonitorSettings
+            $version=Get-DesktopVersion
+            $fleet.appVersion=$version
             Read-ThreadCommands $fleet $version
             Write-Event 'checking-quota'
             $live=Get-QuotaWithAutoReset;$fleet.accountId=$AccountId
@@ -1011,18 +1152,22 @@ function Start-AllMonitor {
             $fleet.counts.managedPending=Get-AutoResumePendingCount $managedRecords
 
             $fleet.nextPollSeconds=Get-PollDelay $quota $fleet.threads.Values ($activeCount+$goalCount)
+            Write-ConnectionStatus @{code='connected';message='已连接 Codex'}
             Save-Journal;Write-Event 'all-monitor' @{remaining=$quota.remaining;weeklyRemaining=$quota.weeklyRemaining;allowed=$quota.allowed;spendControlReached=$quota.spendControlReached;counts=$fleet.counts}
             Close-Ipc;$failures=0
             if($Once){Write-Event 'single-check-finished';break}
             $delay=$fleet.nextPollSeconds
         } catch {
+            $readReason=$_.Exception.Message
             $script:RunDirectory=$rootDirectory;$script:Journal=$fleet;$script:ThreadId='all';$script:OwnerId=$null
-            $failures++;Write-Event 'all-read-error' @{error=$_.Exception.Message;failures=$failures}
+            Write-ConnectionStatus (Get-ConnectionProblem $readReason)
+            $script:CodexInstallation=$null
+            $failures++;Write-Event 'all-read-error' @{error=$readReason;failures=$failures}
             $fleet.readFailureCount=$failures;$fleet.lastReadErrorAt=[DateTimeOffset]::UtcNow.ToString('o');$fleet.nextPollSeconds=[int][Math]::Min([Math]::Max(300,$PollSeconds),$PollSeconds*[Math]::Pow(2,[Math]::Min(4,$failures-1)))
             Close-Ipc;Stop-QuotaServer
             foreach($record in $fleet.threads.Values){$record.recoverySeenAt=$null}
             Save-Journal
-            if($_.Exception.Message -match 'identity mismatch|Unsupported|Invalid simulated|Real quota is insufficient|requires explicit' -or (Test-FailureLimitReached $failures)){Set-Phase 'needs_attention' @{reason=$_.Exception.Message};break}
+            if($readReason -match 'identity mismatch|Unsupported|request-version-mismatch|Invalid simulated|Real quota is insufficient|requires explicit' -or (Test-FailureLimitReached $failures)){Set-Phase 'needs_attention' @{reason=$readReason};break}
             $delay=$fleet.nextPollSeconds
         }
         if(!(Wait-Poll $delay)){break}
@@ -1129,8 +1274,8 @@ function Update-ThreadState($snapshot, $quota, [long]$now) {
     return $decision
 }
 function Start-Monitor {
-    $version=Get-DesktopVersion
     Read-MonitorSettings
+    $version=Get-DesktopVersion
     $statePath=Join-Path $script:RunDirectory 'state.json'
     $script:Journal=$(if (Test-Path -LiteralPath $statePath) {Read-Json $statePath} else {@{threadId=$ThreadId;accountId=$AccountId;mode=$Mode;appVersion=$version;phase='observing';lastControlId=$null;recoverySeenAt=$null;resumeMessageId=$null}})
     if ($script:Journal.threadId -ne $ThreadId -or $script:Journal.accountId -ne $AccountId -or $script:Journal.mode -ne $Mode) { throw 'Saved state identity/mode mismatch. Use a separate state directory.' }
@@ -1229,6 +1374,7 @@ try {
 }
 } catch {
     $reason=$_.Exception.Message
+    Write-ConnectionStatus (Get-ConnectionProblem $reason)
     if($script:RunDirectory -and (Test-Path -LiteralPath $script:RunDirectory)){
         Write-Event 'fatal-error' @{error=$reason}
     }else{

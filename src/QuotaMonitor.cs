@@ -33,6 +33,7 @@ public class MonitorSettings {
     public bool showAllProjects = false;
     public string stateDirectory;
     public string pwshPath;
+    public string codexLocation;
 }
 
 static class Program {
@@ -97,6 +98,7 @@ partial class MonitorWindow : Form {
     readonly Label selectedTask=new Label();
     string settingsSeen="";
     string runtimeFailure;
+    string connectionCode = "", connectionMessage = "";
     string cachedRuntime;
     DateTime stateStamp=DateTime.MinValue, settingsStamp=DateTime.MinValue;
     long stateLength=-1, settingsLength=-1;
@@ -295,19 +297,97 @@ partial class MonitorWindow : Form {
         var background=new ToggleSwitch{Checked=config.trayBackgroundEnabled};rows.Controls.Add(GeneralSwitch("托盘后台运行","最小化或关闭窗口后驻留托盘；关闭此项后，关窗退出。",background),0,6);
         var resetOptions=new FlowLayoutPanel{Dock=DockStyle.Fill,Margin=Padding.Empty,Padding=new Padding(0,6,0,0),WrapContents=false};var resetInput=new NumericUpDown{Minimum=0,Maximum=99,DecimalPlaces=1,Value=(decimal)config.resetWeeklyRemainingPercent,Width=58};resetOptions.Controls.Add(Inline("重置卡触发：周剩余 ≤"));resetOptions.Controls.Add(resetInput);resetOptions.Controls.Add(Inline("%（仅在主界面开关开启时）"));rows.Controls.Add(resetOptions,0,7);
         rows.Controls.Add(Heading("版本更新",12),0,8);rows.Controls.Add(CreateUpdatePanel(dialog),0,9);
-        rows.Controls.Add(SingleActionRow(MakeButton("查看完整日志",delegate{OpenLogs();})),0,10);
+        var supportActions=new FlowLayoutPanel{Dock=DockStyle.Fill,Margin=Padding.Empty,WrapContents=false};
+        supportActions.Controls.Add(MakeButton("Codex 位置…",delegate{OpenCodexLocation(dialog);}));
+        supportActions.Controls.Add(MakeButton("查看完整日志",delegate{OpenLogs();}));
+        rows.Controls.Add(supportActions,0,10);
         startup.CheckedChanged+=delegate{loginStart.Checked=startup.Checked;};background.CheckedChanged+=delegate{config.trayBackgroundEnabled=background.Checked;WriteSettings();};resetInput.ValueChanged+=delegate{resetThreshold.Value=resetInput.Value;SaveAndApply();};dialog.Controls.Add(rows);return dialog;
     }
     void OpenSettings(){using(var dialog=CreateSettingsDialog()){dialog.ShowDialog(this);}}
+    void OpenCodexLocation(Form owner) {
+        using (var dialog = new Form {
+            Text = "Codex 位置", ClientSize = new Size(620, 240), Font = Font,
+            StartPosition = FormStartPosition.CenterParent, AutoScaleMode = AutoScaleMode.Dpi,
+            FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false
+        }) {
+            var rows = Rows(34, 40, 48, -1);
+            rows.Padding = new Padding(18);
+            var description = new Label { Text = "自动查找运行中的 Codex、系统安装记录及常见位置。", Dock = DockStyle.Fill };
+            var location = new TextBox { ReadOnly = true, Dock = DockStyle.Fill, AccessibleName = "Codex 程序位置" };
+            var result = new Label { Dock = DockStyle.Fill, ForeColor = Theme.Muted };
+            Action showLocation = delegate {
+                location.Text = String.IsNullOrWhiteSpace(config.codexLocation) ? "自动查找" : config.codexLocation;
+            };
+            Action<string> saveLocation = delegate(string value) {
+                string previous = config.codexLocation;
+                try {
+                    config.codexLocation = value;
+                    WriteSettings();
+                } catch (Exception error) {
+                    config.codexLocation = previous;
+                    result.Text = "位置保存失败，请重试。";
+                    AppendLog("位置保存失败：" + error.Message);
+                    return;
+                }
+                showLocation();
+                connectionCode = "";
+                connectionMessage = "";
+                runtimeFailure = null;
+                if (WorkerRunning()) Signal("Refresh"); else StartWorker(true);
+                result.Text = "位置已保存，正在重新连接。连接结果显示在主界面下方。";
+            };
+            var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, Margin = Padding.Empty, WrapContents = false };
+            actions.Controls.Add(MakeButton("选择程序…", delegate {
+                using (var picker = new OpenFileDialog {
+                    Title = "选择 Codex 安装文件夹中的 Codex.exe",
+                    Filter = "Codex 程序 (Codex.exe)|Codex.exe", CheckFileExists = true
+                }) {
+                    if (!String.IsNullOrWhiteSpace(config.codexLocation) && File.Exists(config.codexLocation))
+                        picker.InitialDirectory = Path.GetDirectoryName(config.codexLocation);
+                    if (picker.ShowDialog(dialog) == DialogResult.OK) saveLocation(picker.FileName);
+                }
+            }));
+            actions.Controls.Add(MakeButton("恢复自动查找", delegate { saveLocation(null); }));
+            showLocation();
+            result.Text = "自动识别失败时，选择 Codex 的程序文件，并保持 Codex 已打开、已登录。";
+            rows.Controls.Add(description, 0, 0);
+            rows.Controls.Add(location, 0, 1);
+            rows.Controls.Add(actions, 0, 2);
+            rows.Controls.Add(result, 0, 3);
+            dialog.Controls.Add(rows);
+            dialog.ShowDialog(owner);
+        }
+    }
     void UpdateStatusPanel(){
-        bool running=WorkerRunning()&&!stopRequested;DateTime sampled;bool fresh=lastState!=null&&DateTime.TryParse(Str(Get(lastState,"lastCheckedAt")),out sampled)&&(DateTime.UtcNow-sampled.ToUniversalTime()).TotalSeconds<Math.Max(90,config.pollSeconds+30);
+        bool running=WorkerRunning()&&!stopRequested;DateTime sampled;bool fresh=lastState!=null&&DateTime.TryParse(Str(Get(lastState,"lastCheckedAt")),out sampled)&&sampled.ToUniversalTime()>=startedAt.ToUniversalTime()&&(DateTime.UtcNow-sampled.ToUniversalTime()).TotalSeconds<Math.Max(90,config.pollSeconds+30)&&Convert.ToInt32(Get(lastState,"readFailureCount"))==0;
         connectionState.Text=running?(fresh?"● 已连接 Codex":"○ 等待客户端"):"○ 尚未检查";connectionState.ForeColor=running&&fresh?Theme.Green:Theme.Muted;
-        monitorState.Text=running?(config.observeOnly?"只读观察":"● 保护中"):exiting?"正在退出":stopRequested?"保护未开启":"等待自动重连";monitorState.ForeColor=running?Theme.Green:Theme.Muted;
-        protectionStatus.Text=running?(config.observeOnly?"● 只读观察":"● 额度保护中"):exiting?"正在退出":stopRequested?"● 保护未开启":"● 自动重连中";protectionStatus.ForeColor=running?Theme.Green:Theme.Muted;
+        monitorState.Text=running?(fresh?(config.observeOnly?"只读观察":"● 保护中"):"等待连接"):exiting?"正在退出":stopRequested?"保护未开启":"等待自动重连";monitorState.ForeColor=running&&fresh?Theme.Green:Theme.Muted;
+        protectionStatus.Text=running?(fresh?(config.observeOnly?"● 只读观察":"● 额度保护中"):"● 等待连接"):exiting?"正在退出":stopRequested?"● 保护未开启":"● 自动重连中";protectionStatus.ForeColor=running&&fresh?Theme.Green:Theme.Muted;
         quotaFreshState.Text=fresh?"数据新鲜":"上次记录 · 待刷新";quotaFreshState.ForeColor=fresh?Theme.Green:Color.FromArgb(210,137,52);
         selectedTask.Text=chats.CurrentRow==null?"选择需要控制的任务":Str(chats.CurrentRow.Cells[2].Value);
-        string reason=chats.CurrentRow==null?"":Str(chats.CurrentRow.Cells[3].Value);taskState.Text=reason.Length>0?reason:running?"等待选择任务":"点击开始监控";
+        string reason=chats.CurrentRow==null?"":Str(chats.CurrentRow.Cells[3].Value);taskState.Text=reason.Length>0?reason:running?"等待选择任务":"等待连接 Codex";
         if(!running)freshness.Text=exiting?"正在退出管家；退出后不再执行额度保护。":stopRequested?"额度保护未运行，显示上次记录；刷新或继续任务可恢复后台。":"额度保护正在自动重连，显示上次记录。";
+        if (!exiting && !stopRequested && connectionCode.Length > 0 && connectionCode != "connected") {
+            connectionState.Text = connectionCode == "codex-missing" ? "○ 未找到 Codex" :
+                connectionCode == "location-invalid" ? "○ 位置不可用" :
+                connectionCode == "incompatible" ? "○ 版本不兼容" :
+                connectionCode == "login-required" ? "○ 需要登录" : "○ 尚未连接";
+            connectionState.ForeColor = Theme.Muted;
+            bool blocked = connectionCode == "incompatible" || connectionCode == "identity-mismatch";
+            monitorState.Text = blocked ? "保护已停止" : "等待连接";
+            protectionStatus.Text = blocked ? "● 保护已停止" : "● 等待连接";
+            monitorState.ForeColor = protectionStatus.ForeColor = Theme.Muted;
+            quotaFreshState.Text = "上次记录 · 待刷新";
+            quotaFreshState.ForeColor = Color.FromArgb(210,137,52);
+            freshness.Text = connectionMessage;
+            freshness.ForeColor = Color.FromArgb(185,61,41);
+        }
+        if (!exiting && !stopRequested && runtimeFailure != null) {
+            connectionState.Text = "○ 启动失败";
+            monitorState.Text = protectionStatus.Text = "保护未启动";
+            freshness.Text = runtimeFailure;
+            freshness.ForeColor = Color.FromArgb(185,61,41);
+        }
         if(DateTime.UtcNow<actionFeedbackUntil){selectedTask.Text=actionFeedback;taskState.Text=actionFeedback;}
     }
     string StartupShortcut() {return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup),"Codex 任务托管.lnk");}
@@ -348,6 +428,7 @@ partial class MonitorWindow : Form {
         if(!String.IsNullOrWhiteSpace(config.pwshPath))candidates.Add(Environment.ExpandEnvironmentVariables(config.pwshPath.Trim().Trim('"')));
         candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),".cache","codex-runtimes","codex-primary-runtime","dependencies","native","powershell","pwsh.exe"));
         candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"PowerShell","7","pwsh.exe"));
+        candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),"PowerShell","7","pwsh.exe"));
         foreach(string folder in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) {
             if(!String.IsNullOrWhiteSpace(folder))try{candidates.Add(Path.Combine(folder.Trim().Trim('"'),"pwsh.exe"));}catch(ArgumentException){}
         }
@@ -358,7 +439,43 @@ partial class MonitorWindow : Form {
                 if(info.FileMajorPart>=7){cachedRuntime=candidate;return candidate;}
             }catch(System.ComponentModel.Win32Exception){}
         }
+        string packagedRuntime = FindPackagedRuntime();
+        if (packagedRuntime != null) { cachedRuntime = packagedRuntime; return packagedRuntime; }
         throw new Exception("缺少 PowerShell 7 运行组件，请安装 PowerShell 7 后重新打开任务管家。");
+    }
+    string FindPackagedRuntime() {
+        // Windows PowerShell is used only to locate Codex's registered runtime package.
+        string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+        if (!File.Exists(powershell)) return null;
+        const string query = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); " +
+            "Get-AppxPackage -Name 'OpenAI.CodexPrimaryRuntime*' -ErrorAction SilentlyContinue | " +
+            "Sort-Object Version -Descending | ForEach-Object { $_.InstallLocation }";
+        using (var probe = new Process()) {
+            probe.StartInfo = new ProcessStartInfo(powershell, "-NoLogo -NoProfile -NonInteractive -Command " + Quote(query)) {
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8
+            };
+            try {
+                probe.Start();
+                var output = probe.StandardOutput.ReadToEndAsync();
+                var errors = probe.StandardError.ReadToEndAsync();
+                if (!probe.WaitForExit(5000)) {
+                    probe.Kill();
+                    probe.WaitForExit(1000);
+                    return null;
+                }
+                if (probe.ExitCode != 0 || !output.Wait(1000) || !errors.Wait(1000)) return null;
+                foreach (string directory in output.Result.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)) {
+                    string candidate = Path.Combine(directory.Trim(), "dependencies", "native", "powershell", "pwsh.exe");
+                    if (File.Exists(candidate) && FileVersionInfo.GetVersionInfo(candidate).FileMajorPart >= 7) return candidate;
+                }
+            } catch (System.ComponentModel.Win32Exception) { }
+              catch (InvalidOperationException) { }
+              catch (IOException) { }
+        }
+        return null;
     }
     void DisposeWorker() {
         if(worker==null)return;
@@ -375,16 +492,22 @@ partial class MonitorWindow : Form {
     }
     void KeepProtectionRunning() {
         if(exiting || stopRequested || smokeTest || WorkerRunning() || DateTime.UtcNow<nextProtectionRestart)return;
+        if(connectionCode=="incompatible" || connectionCode=="identity-mismatch")return;
         StartWorker();
     }
     void StartWorker(bool manual=false) {
         if(manual){restartFailures=0;nextProtectionRestart=DateTime.MinValue;}
         if(WorkerRunning() || exiting) return;
-        if(!manual && lastState!=null && Str(Get(lastState,"phase"))=="needs_attention"){runtimeFailure="任务保护已停止，请在设置中查看原因后手动重试。";return;}
+        if(!manual && lastState!=null && Str(Get(lastState,"phase"))=="needs_attention"){
+            if(connectionMessage.Length==0)runtimeFailure="任务保护已停止，请在设置中查看原因后手动重试。";
+            return;
+        }
         nextProtectionRestart=DateTime.UtcNow.AddSeconds(Math.Min(300,30*Math.Pow(2,Math.Min(4,restartFailures++))));
         try {
             WriteSettings(); stopRequested=false;
             DisposeWorker();
+            lock(outputLock){pendingOutput.Clear();}
+            connectionCode="";connectionMessage="";runtimeFailure=null;
             worker=new Process();
             worker.StartInfo=new ProcessStartInfo(FindRuntime(),"-NoLogo -NoProfile -File "+Quote(backendPath)+" -All -Mode "+(smokeTest ? "Monitor" : "Auto")+" -StateDirectory "+Quote(stateDir)+" -SettingsPath "+Quote(settingsPath));
             worker.StartInfo.UseShellExecute=false; worker.StartInfo.CreateNoWindow=true;
@@ -397,11 +520,23 @@ partial class MonitorWindow : Form {
         } catch(Exception e) { if(worker!=null)try{if(!worker.HasExited)worker.Kill();}catch(InvalidOperationException){} DisposeWorker(); runtimeFailure=e.Message; AppendLog("启动失败："+e.Message); mode.Text="额度保护连接失败，等待自动重连"; }
     }
     void WorkerOutput(object sender,DataReceivedEventArgs e) {
-        if(String.IsNullOrWhiteSpace(e.Data) || IsDisposed)return;
+        if(String.IsNullOrWhiteSpace(e.Data) || IsDisposed || !Object.ReferenceEquals(sender,worker))return;
         lock(outputLock){pendingOutput.Enqueue(e.Data.Length>4096 ? e.Data.Substring(0,4096) : e.Data);while(pendingOutput.Count>120)pendingOutput.Dequeue();}
     }
     void FlushOutput() {
-        lock(outputLock){while(pendingOutput.Count>0)AddLogLine(pendingOutput.Dequeue());}
+        var output = new List<string>();
+        lock(outputLock){while(pendingOutput.Count>0)output.Add(pendingOutput.Dequeue());}
+        foreach (string line in output) {
+            const string prefix = "CQM_CONNECTION ";
+            if (line.StartsWith(prefix, StringComparison.Ordinal)) {
+                try {
+                    var status = Obj(json.DeserializeObject(line.Substring(prefix.Length)));
+                    connectionCode = Str(Get(status,"code"));
+                    connectionMessage = Str(Get(status,"message"));
+                    if (connectionCode != "connected") AddLogLine(connectionMessage);
+                } catch (ArgumentException) { AddLogLine(line); }
+            } else AddLogLine(line);
+        }
         if(!logDirty)return;logDirty=false;
         string text=String.Join(Environment.NewLine,logLines.ToArray());
         if(log.Text!=text){log.Text=text;log.SelectionStart=log.TextLength;log.ScrollToCaret();}
@@ -570,7 +705,7 @@ partial class MonitorWindow : Form {
         five.Tick(); week.Tick();UpdateStatusPanel();
         if(!WorkerRunning()) {
             mode.Text=stopRequested ? "额度保护未开启；刷新或继续任务可恢复" : "额度保护等待自动重连";
-            if(!stopRequested && lastState!=null && Str(Get(lastState,"phase"))=="needs_attention")runtimeFailure="任务保护已停止，请在设置中查看原因后重试。";
+            if(!stopRequested && connectionMessage.Length==0 && lastState!=null && Str(Get(lastState,"phase"))=="needs_attention")runtimeFailure="任务保护已停止，请在设置中查看原因后重试。";
             if(!stopRequested && runtimeFailure!=null){mode.Text="额度保护未启动";freshness.Text=runtimeFailure;freshness.ForeColor=Color.FromArgb(185,61,41);}
             if(exiting) {FinishExit(); return;}
         }

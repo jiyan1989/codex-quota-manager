@@ -14,7 +14,7 @@
 
 **Pause selected Codex chats before their quota runs low, resume them when quota recovers, and preserve a weekly quota reserve.**
 
-A local Windows companion for Codex Desktop. Select existing chats to manage; no new chat or separate “start monitoring” action is required. Current release: **v1.5.3**. The application interface is currently in Chinese; this is the English documentation.
+A local Windows companion for Codex Desktop. Select existing chats to manage; no new chat or separate “start monitoring” action is required. Current release: **v1.5.4**. The application interface is currently in Chinese; this is the English documentation.
 
 [Download](https://github.com/jiyan1989/codex-quota-manager/releases/latest) · [Quick start](#quick-start) · [Quota rules](#quota-rules) · [Release notes](https://github.com/jiyan1989/codex-quota-manager/releases)
 
@@ -40,7 +40,7 @@ A local Windows companion for Codex Desktop. Select existing chats to manage; no
 
 Normal startup enables quota protection. The main window provides task pause/resume without a duplicate monitoring toggle.
 
-**Requirements:** Windows x64, .NET Framework 4.5+, PowerShell 7, and a signed-in Codex Desktop installation. The app searches for PowerShell 7 and reports a missing runtime component if it cannot find one.
+**Requirements:** Windows x64, .NET Framework 4.5+, PowerShell 7, and a signed-in Codex Desktop installation. The app searches for PowerShell 7, including registered Codex runtime packages, and reports a missing runtime component if it cannot find one.
 
 ## Quota rules
 
@@ -75,6 +75,15 @@ These images contain fictional chats and quota values, with no real account data
 
 Disabling automatic resume does not disable protective pausing. Manual resume remains available. Read-only observation mode displays status without controlling chats.
 
+## New in v1.5.4
+
+- Discovers Codex from running processes, registered installations, common directories, and the command search path. Supports common Store and portable layouts.
+- Adds a **Codex location** entry at the bottom of settings. Select Codex.exe when automatic discovery fails, or restore automatic discovery.
+- Shows actionable status for a missing executable, invalid selection, disconnected desktop, missing login, or incompatible client version.
+- Distinguishes the desktop launcher from its companion CLI and rediscovers executables whose previous location no longer exists.
+
+Passed 26 isolated discovery/diagnostic checks and a read-only executable/version lookup on the maintainer's computer. Other-machine installation, full chat control, and the latest UI still require manual acceptance.
+
 ## New in v1.5.3
 
 - Expanded PowerShell 7 runtime discovery and visible startup errors.
@@ -89,6 +98,8 @@ Compilation, isolated policy checks, and log rotation checks passed. No measured
 ## Updates and common questions
 
 **How do existing users update?** v1.5.0+ offers one settings button that changes from checking to installing an available update. Automatic checks notify only; installation requires a click. v1.4.1 and earlier need one manual upgrade. Updates validate the download, preserve settings, management records, and manual pauses, and support rollback on installation/startup failure.
+
+**Codex is not detected on another computer:** open Codex and sign in, then refresh. If discovery still fails, open settings → **Codex 位置…** (Codex location) and select Codex.exe in its installation folder. For an incompatible-client message, check for a Quota Manager update. Keep Codex Desktop open after selecting its location.
 
 **A chat is missing:** enable the all-tasks filter and search its original title or working directory, then select it. Entering a path does not create or start a chat.
 
