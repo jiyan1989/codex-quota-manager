@@ -11,6 +11,7 @@
 [![PowerShell 7及以上运行环境](https://img.shields.io/badge/PowerShell-7%2B-5391FE?style=flat)](#三步开始)
 [![Python 3.10及以上可选集成](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat&logo=python&logoColor=white)](#developer)
 [![MCP 本地标准输入输出接口](https://img.shields.io/badge/MCP-stdio-16a34a?style=flat)](#developer)
+[![M8ven Score](https://m8ven.ai/badge/mcp/jiyan1989-codex-quota-manager-80lx9z?v=e6856e7d9767399c77accff849c46198)](https://m8ven.ai/mcp/jiyan1989-codex-quota-manager-80lx9z?s=readme)
 
 **让 Codex 所选任务在额度不足前暂停，额度恢复后自动继续，同时保留你设定的周额度。**
 
