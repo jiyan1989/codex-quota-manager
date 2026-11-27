@@ -14,7 +14,7 @@
 
 **Pause selected Codex chats before their quota runs low, resume them when quota recovers, and preserve a weekly quota reserve.**
 
-A local Windows companion for Codex Desktop. Select existing chats to manage; no new chat or separate “start monitoring” action is required. Current release: **v1.5.4**. The application interface is currently in Chinese; this is the English documentation.
+A local Windows companion for Codex Desktop. Select existing chats to manage; no new chat or separate “start monitoring” action is required. Current release: **v1.5.5**. The application interface is currently in Chinese; this is the English documentation.
 
 [Download](https://github.com/jiyan1989/codex-quota-manager/releases/latest) · [Quick start](#quick-start) · [Quota rules](#quota-rules) · [Release notes](https://github.com/jiyan1989/codex-quota-manager/releases)
 

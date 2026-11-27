@@ -263,7 +263,7 @@ partial class MonitorWindow : Form {
         resumeThreshold.ValueChanged+=delegate{if(!loading){if(resumeThreshold.Value<=threshold.Value)threshold.Value=resumeThreshold.Value-1;SaveAndApply();}};
         autoResume.CheckedChanged+=delegate{if(!loading)SaveAndApply();};autoReset.CheckedChanged+=delegate{if(!loading)SaveAndApply();};
         loginStart.CheckedChanged+=delegate{if(!loading){try{SetStartup(loginStart.Checked);}catch(Exception e){AppendLog("自启动设置失败："+e.Message);}}};
-        chats.SelectionChanged+=delegate{UpdateStatusPanel();};
+        chats.SelectionChanged+=delegate{if(!loading)UpdateStatusPanel();};
     }
     TableLayoutPanel SwitchRow(string text,CheckBox toggle){var row=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty,BackColor=Color.White};row.RowStyles.Add(new RowStyle(SizeType.Percent,100));row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,60));row.Controls.Add(new Label{Text=text,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,ForeColor=Theme.Ink},0,0);toggle.Text=text;toggle.AccessibleName=text;toggle.Anchor=AnchorStyles.Right;toggle.Margin=Padding.Empty;row.Controls.Add(toggle,1,0);return row;}
     string PolicySummary(){return "五小时："+config.pauseRemainingPercent.ToString("0.#")+"% 暂停 / "+config.resumeRemainingPercent.ToString("0.#")+"% 自动恢复\n周额度保留底线："+config.weeklyPauseRemainingPercent.ToString("0.#")+"%（设置中可修改）";}
@@ -617,28 +617,52 @@ partial class MonitorWindow : Form {
         var data=Items(Get(lastState,"chats")).Select(Obj).Where(x=>showAll.Checked || search.Text.Length>0 || IsRelevantChat(x) || config.resumeThreadIds.Contains(Str(Get(x,"id")))).Where(x=>search.Text.Length==0 || (Str(Get(x,"title"))+" "+Str(Get(x,"workspace"))).IndexOf(search.Text,StringComparison.OrdinalIgnoreCase)>=0).OrderByDescending(x=>config.resumeThreadIds.Contains(Str(Get(x,"id")))).ToList();
         string selected=chats.CurrentRow==null ? "" : Str(chats.CurrentRow.Tag);
         int scroll=chats.FirstDisplayedScrollingRowIndex;
-        loading=true; var ids=new HashSet<string>(config.resumeThreadIds);var excluded=new HashSet<string>(config.resumeExcludedThreadIds);
-        var wantedIds=new HashSet<string>(data.Select(x=>Str(Get(x,"id"))));
-        for(int row=chats.Rows.Count-1;row>=0;row--)if(!wantedIds.Contains(Str(chats.Rows[row].Tag)))chats.Rows.RemoveAt(row);
-        var rows=chats.Rows.Cast<DataGridViewRow>().ToDictionary(x=>Str(x.Tag));
-        int desiredIndex=0;
-        foreach(var chat in data) {
-            string id=Str(Get(chat,"id")), why=Str(Get(chat,"waitReason"));
-            string runtime=Str(Get(chat,"runtime"));if(runtime=="执行中" && Str(Get(chat,"goalStatus"))=="active")runtime="目标执行";
-            DataGridViewRow row;
-            if(!rows.TryGetValue(id,out row)){int added=chats.Rows.Add();row=chats.Rows[added];row.Tag=id;}
-            if(row.Index!=desiredIndex){chats.Rows.Remove(row);chats.Rows.Insert(desiredIndex,row);}
-            desiredIndex++;int index=row.Index;
-            object[] values={resumeAll.Checked ? !excluded.Contains(id) : ids.Contains(id),Str(Get(chat,"title")),runtime,!ids.Contains(id) && !resumeAll.Checked ? "未托管" : why.Length>0 ? why : Phase(Str(Get(chat,"monitorPhase")))};
-            for(int cell=0;cell<values.Length;cell++)if(!Object.Equals(row.Cells[cell].Value,values[cell]))row.Cells[cell].Value=values[cell];
-            chats.Rows[index].Tag=id; chats.Rows[index].Cells[1].ToolTipText=Str(Get(chat,"title"))+"\n"+Str(Get(chat,"workspace"));
-            chats.Rows[index].Cells[3].ToolTipText=why;
-            chats.Rows[index].Cells[2].Style.ForeColor=runtime.Contains("执行") ? Color.FromArgb(16,114,107) : Color.FromArgb(109,118,137);
-            if(id==selected) chats.CurrentCell=chats.Rows[index].Cells[1];
+        var ids = new HashSet<string>(config.resumeThreadIds);
+        var excluded = new HashSet<string>(config.resumeExcludedThreadIds);
+        bool rebuild = chats.Rows.Count != data.Count;
+        for (int i = 0; !rebuild && i < data.Count; i++) {
+            rebuild = Str(chats.Rows[i].Tag) != Str(Get(data[i], "id"));
         }
-        chats.Columns[0].ReadOnly=false;listTitle.Text=(showAll.Checked ? "全部 " : "相关 ")+data.Count+" 个";
-        if(scroll>=0 && scroll<chats.Rows.Count) chats.FirstDisplayedScrollingRowIndex=scroll;
-        loading=false; lastRendered=revision;
+
+        bool wasLoading = loading;
+        loading = true;
+        try {
+            // WinForms rows and cells belong to their current grid position.
+            // On a structural change, populate new rows instead of reinserting detached rows.
+            if (rebuild) chats.Rows.Clear();
+            DataGridViewRow selectedRow = null;
+            for (int i = 0; i < data.Count; i++) {
+                var chat = data[i];
+                string id = Str(Get(chat, "id"));
+                string why = Str(Get(chat, "waitReason"));
+                string runtime = Str(Get(chat, "runtime"));
+                if (runtime == "执行中" && Str(Get(chat, "goalStatus")) == "active") runtime = "目标执行";
+                bool managed = resumeAll.Checked ? !excluded.Contains(id) : ids.Contains(id);
+                string phase = !managed && !resumeAll.Checked ? "未托管" :
+                    why.Length > 0 ? why : Phase(Str(Get(chat, "monitorPhase")));
+                object[] values = { managed, Str(Get(chat, "title")), runtime, phase };
+
+                if (rebuild) chats.Rows.Add(values);
+                var row = chats.Rows[i];
+                row.Tag = id;
+                if (!rebuild) {
+                    for (int cell = 0; cell < values.Length; cell++) {
+                        if (!Object.Equals(row.Cells[cell].Value, values[cell])) row.Cells[cell].Value = values[cell];
+                    }
+                }
+                row.Cells[1].ToolTipText = Str(Get(chat, "title")) + "\n" + Str(Get(chat, "workspace"));
+                row.Cells[3].ToolTipText = why;
+                row.Cells[2].Style.ForeColor = runtime.Contains("执行") ? Color.FromArgb(16,114,107) : Color.FromArgb(109,118,137);
+                if (id == selected) selectedRow = row;
+            }
+            if (rebuild && selectedRow != null) chats.CurrentCell = selectedRow.Cells[1];
+            if (rebuild && scroll >= 0 && scroll < chats.Rows.Count) chats.FirstDisplayedScrollingRowIndex = scroll;
+            listTitle.Text = (showAll.Checked ? "全部 " : "相关 ") + data.Count + " 个";
+            lastRendered = revision;
+        } finally {
+            loading = wasLoading;
+        }
+        if (!loading) UpdateStatusPanel();
     }
     static bool IsRelevantChat(Dictionary<string,object> chat){
         string runtime=Str(Get(chat,"runtime")),phase=Str(Get(chat,"monitorPhase"));
